@@ -1,0 +1,1229 @@
+import { useState, useEffect, useRef } from 'react';
+
+interface RegisterModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onRegister?: (email: string, password: string) => Promise<{ error: Error | null }>;
+  onSwitchToLogin: () => void;
+  onSubmitRegister: (data: RegisterData) => Promise<void>;
+}
+
+interface RegisterData {
+  associationName: string;
+  phone: string;
+  license: string;
+  email: string;
+  entityType: string;
+  password: string;
+  confirmPassword: string;
+}
+
+const ENTITY_TYPES = [
+  { value: 'جمعية أهلية', label: 'جمعية أهلية', icon: '🏛️' },
+  { value: 'مؤسسة أهلية', label: 'مؤسسة أهلية', icon: '🏢' },
+  { value: 'فرد', label: 'فرد', icon: '👤' },
+];
+
+export function RegisterModal({
+  isOpen,
+  onClose,
+  onSubmitRegister,
+  onSwitchToLogin,
+}: RegisterModalProps) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+  const firstInputRef = useRef<HTMLInputElement>(null);
+
+  // OTP state
+  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [resendCountdown, setResendCountdown] = useState(60);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [verified, setVerified] = useState(false);
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const [formData, setFormData] = useState<RegisterData>({
+    associationName: '',
+    phone: '',
+    license: '',
+    email: '',
+    entityType: '',
+    password: '',
+    confirmPassword: '',
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => firstInputRef.current?.focus(), 100);
+      setStep(1);
+      setError(null);
+      setOtp(['', '', '', '', '', '']);
+      setOtpError(null);
+      setVerified(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) onClose();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, onClose]);
+
+  // Countdown timer for OTP resend
+  useEffect(() => {
+    if (step === 3 && resendCountdown > 0) {
+      const timer = setTimeout(() => setResendCountdown(c => c - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [step, resendCountdown]);
+
+  const handleChange = (field: keyof RegisterData, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (error) setError(null);
+  };
+
+  const validateStep1 = () => {
+    const { associationName, phone, license, entityType } = formData;
+    if (!associationName.trim()) { setError('يرجى إدخال اسم الكيان'); return false; }
+    if (!entityType) { setError('يرجى اختيار نوع الكيان'); return false; }
+    if (!/^05[0-9]{8}$/.test(phone)) { setError('رقم الجوال غير صحيح (يجب أن يبدأ بـ 05 ويكون 10 أرقام)'); return false; }
+    if (license.trim().length < 5) { setError('رقم الترخيص قصير جداً (5 أحرف على الأقل)'); return false; }
+    return true;
+  };
+
+  const validateStep2 = () => {
+    const { email, password, confirmPassword } = formData;
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('يرجى إدخال بريد إلكتروني صحيح');
+      return false;
+    }
+    if (password.length < 8) { setError('كلمة المرور يجب أن تكون 8 أحرف على الأقل'); return false; }
+    if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+      setError('كلمة المرور يجب أن تحتوي على حروف وأرقام');
+      return false;
+    }
+    if (password !== confirmPassword) { setError('كلمتا المرور غير متطابقتان'); return false; }
+    return true;
+  };
+
+  const handleNextStep = () => {
+    setError(null);
+    if (validateStep1()) setStep(2);
+  };
+
+  // Step 2 → Step 3: create account then send OTP
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!validateStep2()) return;
+
+    setLoading(true);
+    try {
+      await onSubmitRegister(formData);
+      // Account created — now move to OTP verification
+      setStep(3);
+      setResendCountdown(60);
+      setOtp(['', '', '', '', '', '']);
+    } catch (err: any) {
+      setError(err.message || 'حدث خطأ غير متوقع');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ✅ OTP Verification — type: 'signup' لأن المستخدم سجّل بـ signUp
+  const verifyOtp = async (code: string) => {
+    setOtpLoading(true);
+    setOtpError(null);
+    try {
+      const { supabase } = await import('../lib/supabase');
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: formData.email,
+        token: code,
+        type: 'signup', // ✅ مُصلح: كان 'email' والصح 'signup'
+      });
+      if (error) throw error;
+      if (data.user) {
+        // ✅ إدخال بيانات المستخدم في DB فقط بعد تأكيد OTP
+        const pending = sessionStorage.getItem('pending_registration');
+        if (pending) {
+          const profileData = JSON.parse(pending);
+          await supabase.from('user').upsert([{
+            user_id: data.user.id,
+            association_name: profileData.association_name,
+            user_phone: profileData.user_phone,
+            user_email: profileData.user_email,
+            license_number: profileData.license_number,
+            entity_type: profileData.entity_type,
+            phone_verified: true,
+            phone_verified_at: new Date().toISOString(),
+          }], { onConflict: 'user_id' });
+          sessionStorage.removeItem('pending_registration');
+        } else {
+          await supabase.from('user').update({
+            phone_verified: true,
+            phone_verified_at: new Date().toISOString(),
+          }).eq('user_id', data.user.id);
+        }
+
+        setVerified(true);
+        setTimeout(() => {
+          onClose();
+        }, 2000);
+      }
+    } catch (err: any) {
+      const msg = err.message?.includes('Token has expired')
+        ? 'انتهت صلاحية الرمز، اطلب رمزاً جديداً'
+        : err.message?.includes('Invalid')
+        ? 'رمز التحقق غير صحيح، تحقق وأعد المحاولة'
+        : err.message || 'رمز التحقق غير صحيح';
+      setOtpError(msg);
+      setOtp(['', '', '', '', '', '']);
+      otpRefs.current[0]?.focus();
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  // ✅ إعادة إرسال OTP — نستخدم resend بدل signInWithOtp
+  const handleResendOtp = async () => {
+    if (resendCountdown > 0) return;
+    setResendLoading(true);
+    try {
+      const { supabase } = await import('../lib/supabase');
+      // ✅ مُصلح: نستخدم signInWithOtp مع shouldCreateUser: false لإعادة الإرسال فقط
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: formData.email,
+      });
+      if (error) throw error;
+      setResendCountdown(60);
+      setOtpError(null);
+    } catch (err: any) {
+      setOtpError(err.message || 'فشل في إعادة إرسال الرمز');
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
+  const handleOtpChange = (index: number, value: string) => {
+    if (!/^\d*$/.test(value)) return;
+    const newOtp = [...otp];
+    newOtp[index] = value.slice(-1);
+    setOtp(newOtp);
+    setOtpError(null);
+    if (value && index < 5) otpRefs.current[index + 1]?.focus();
+    const complete = newOtp.join('');
+    if (complete.length === 6) verifyOtp(complete);
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !otp[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handleOtpPaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (pasted.length === 6) {
+      setOtp(pasted.split(''));
+      verifyOtp(pasted);
+    }
+  };
+
+  const getPasswordStrength = (pwd: string) => {
+    if (!pwd) return { level: 0, label: '', color: '' };
+    let score = 0;
+    if (pwd.length >= 8) score++;
+    if (pwd.length >= 12) score++;
+    if (/[A-Z]/.test(pwd)) score++;
+    if (/[0-9]/.test(pwd)) score++;
+    if (/[^A-Za-z0-9]/.test(pwd)) score++;
+    if (score <= 1) return { level: 1, label: 'ضعيفة', color: '#cc2244' };
+    if (score <= 3) return { level: 2, label: 'متوسطة', color: '#b07800' };
+    return { level: 3, label: 'قوية', color: '#007a3d' };
+  };
+
+  const strength = getPasswordStrength(formData.password);
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
+
+        .rm-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 40, 100, 0.55);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          padding: 16px;
+          animation: rm-fadeIn 0.25s ease;
+        }
+
+        @keyframes rm-fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        .rm-card {
+          font-family: 'Tajawal', sans-serif;
+          background: #ffffff;
+          border: 1px solid rgba(0, 140, 255, 0.18);
+          border-radius: 28px;
+          width: 100%;
+          max-width: 520px;
+          max-height: 92vh;
+          overflow-y: auto;
+          position: relative;
+          animation: rm-slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+          box-shadow:
+            0 0 0 1px rgba(0, 140, 255, 0.08),
+            0 40px 80px rgba(0, 80, 180, 0.15),
+            0 0 60px rgba(0, 140, 255, 0.08);
+          scrollbar-width: thin;
+          scrollbar-color: rgba(0, 140, 255, 0.2) transparent;
+        }
+
+        .rm-card::-webkit-scrollbar { width: 3px; }
+        .rm-card::-webkit-scrollbar-thumb { background: rgba(0, 140, 255, 0.25); border-radius: 3px; }
+
+        @keyframes rm-slideUp {
+          from { opacity: 0; transform: translateY(32px) scale(0.97); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .rm-card::before {
+          content: '';
+          position: absolute;
+          top: 0; left: 0; right: 0;
+          height: 3px;
+          background: linear-gradient(90deg, transparent, rgba(0, 140, 255, 0.8), transparent);
+          animation: rm-scan 3s ease-in-out infinite;
+          z-index: 10;
+          border-radius: 28px 28px 0 0;
+        }
+
+        @keyframes rm-scan {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
+        }
+
+        .rm-header {
+          padding: 32px 32px 24px;
+          position: relative;
+          border-bottom: 1px solid rgba(0, 140, 255, 0.1);
+          background: linear-gradient(180deg, rgba(0, 100, 255, 0.04) 0%, transparent 100%);
+        }
+
+        .rm-header-glow {
+          position: absolute;
+          top: -40px; left: 50%; transform: translateX(-50%);
+          width: 200px; height: 120px;
+          background: radial-gradient(ellipse, rgba(0, 140, 255, 0.12) 0%, transparent 70%);
+          pointer-events: none;
+        }
+
+        .rm-logo-ring {
+          width: 64px;
+          height: 64px;
+          border-radius: 50%;
+          border: 2px solid rgba(0, 140, 255, 0.4);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 16px;
+          position: relative;
+          animation: rm-rotate-border 6s linear infinite;
+          background: linear-gradient(135deg, rgba(0, 140, 255, 0.08), rgba(0, 80, 200, 0.12));
+        }
+
+        .rm-logo-ring::before {
+          content: '';
+          position: absolute;
+          inset: -4px;
+          border-radius: 50%;
+          border: 1px solid transparent;
+          border-top-color: rgba(0, 140, 255, 0.7);
+          border-right-color: rgba(0, 140, 255, 0.2);
+          animation: rm-rotate-border 2s linear infinite;
+        }
+
+        @keyframes rm-rotate-border {
+          to { transform: rotate(360deg); }
+        }
+
+        .rm-title {
+          font-size: 22px;
+          font-weight: 900;
+          color: #0d2b5e;
+          text-align: center;
+          margin: 0 0 6px;
+          letter-spacing: -0.3px;
+        }
+
+        .rm-subtitle {
+          font-size: 13px;
+          color: rgba(0, 100, 200, 0.7);
+          text-align: center;
+          margin: 0;
+        }
+
+        .rm-steps {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0;
+          padding: 20px 32px 0;
+          direction: rtl;
+        }
+
+        .rm-step-dot {
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          font-weight: 700;
+          font-family: 'Tajawal', sans-serif;
+          border: 1.5px solid rgba(0, 140, 255, 0.25);
+          color: rgba(0, 100, 200, 0.45);
+          background: rgba(0, 140, 255, 0.05);
+          transition: all 0.3s ease;
+          position: relative;
+          z-index: 1;
+        }
+
+        .rm-step-dot.active {
+          border-color: rgba(0, 120, 255, 0.8);
+          color: #0066ff;
+          background: rgba(0, 120, 255, 0.1);
+          box-shadow: 0 0 16px rgba(0, 120, 255, 0.2);
+        }
+
+        .rm-step-dot.done {
+          border-color: rgba(0, 160, 80, 0.7);
+          color: #00a050;
+          background: rgba(0, 160, 80, 0.08);
+        }
+
+        .rm-step-line {
+          flex: 1;
+          height: 1px;
+          background: rgba(0, 140, 255, 0.12);
+          max-width: 60px;
+          transition: background 0.3s;
+        }
+
+        .rm-step-line.done {
+          background: rgba(0, 160, 80, 0.4);
+        }
+
+        .rm-body {
+          padding: 24px 32px 28px;
+          direction: rtl;
+        }
+
+        .rm-label {
+          display: block;
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(0, 80, 180, 0.8);
+          margin-bottom: 7px;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+        }
+
+        .rm-input {
+          width: 100%;
+          padding: 12px 14px;
+          background: #f4f8ff;
+          border: 1px solid rgba(0, 120, 255, 0.18);
+          border-radius: 12px;
+          font-family: 'Tajawal', sans-serif;
+          font-size: 14px;
+          color: #1a2d5a;
+          outline: none;
+          transition: all 0.25s ease;
+          box-sizing: border-box;
+          direction: rtl;
+        }
+
+        .rm-input:focus {
+          border-color: rgba(0, 120, 255, 0.55);
+          background: #eef4ff;
+          box-shadow: 0 0 0 3px rgba(0, 120, 255, 0.1);
+        }
+
+        .rm-input::placeholder { color: rgba(0, 80, 180, 0.3); }
+
+        .rm-entity-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+        }
+
+        .rm-entity-btn {
+          padding: 10px 8px;
+          border: 1px solid rgba(0, 120, 255, 0.18);
+          border-radius: 10px;
+          background: #f4f8ff;
+          color: rgba(0, 80, 180, 0.65);
+          font-family: 'Tajawal', sans-serif;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .rm-entity-btn:hover {
+          border-color: rgba(0, 120, 255, 0.4);
+          background: #e8f0ff;
+          color: rgba(0, 80, 200, 0.9);
+        }
+
+        .rm-entity-btn.selected {
+          border-color: rgba(0, 120, 255, 0.7);
+          background: rgba(0, 120, 255, 0.1);
+          color: #0055dd;
+          box-shadow: 0 0 12px rgba(0, 120, 255, 0.12);
+        }
+
+        .rm-strength-bar {
+          display: flex;
+          gap: 4px;
+          margin-top: 8px;
+        }
+
+        .rm-strength-seg {
+          height: 3px;
+          flex: 1;
+          border-radius: 2px;
+          transition: background 0.3s;
+        }
+
+        .rm-pw-wrap {
+          position: relative;
+        }
+
+        .rm-pw-toggle {
+          position: absolute;
+          left: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: none;
+          border: none;
+          cursor: pointer;
+          color: rgba(0, 100, 200, 0.45);
+          font-size: 14px;
+          padding: 4px;
+          transition: color 0.2s;
+          line-height: 1;
+        }
+
+        .rm-pw-toggle:hover { color: rgba(0, 100, 200, 0.9); }
+
+        .rm-error {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          background: rgba(255, 77, 109, 0.08);
+          border: 1px solid rgba(255, 77, 109, 0.25);
+          border-radius: 10px;
+          color: #cc2244;
+          font-size: 13px;
+          font-weight: 600;
+          margin-bottom: 16px;
+        }
+
+        .rm-btn-primary {
+          width: 100%;
+          padding: 14px;
+          background: linear-gradient(135deg, rgba(0, 229, 255, 0.9), rgba(0, 150, 255, 0.9));
+          border: none;
+          border-radius: 14px;
+          color: #001a2c;
+          font-family: 'Tajawal', sans-serif;
+          font-size: 15px;
+          font-weight: 800;
+          cursor: pointer;
+          transition: all 0.25s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          position: relative;
+          overflow: hidden;
+          letter-spacing: 0.3px;
+        }
+
+        .rm-btn-primary::before {
+          content: '';
+          position: absolute;
+          top: -50%; left: -50%;
+          width: 200%; height: 200%;
+          background: linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%);
+          transform: translateX(-100%);
+          transition: transform 0.5s ease;
+        }
+
+        .rm-btn-primary:hover:not(:disabled)::before { transform: translateX(100%); }
+        .rm-btn-primary:hover:not(:disabled) {
+          box-shadow: 0 0 30px rgba(0, 229, 255, 0.4);
+          transform: translateY(-1px);
+        }
+        .rm-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .rm-btn-back {
+          width: 100%;
+          padding: 11px;
+          background: transparent;
+          border: 1px solid rgba(0, 120, 255, 0.18);
+          border-radius: 12px;
+          color: rgba(0, 80, 180, 0.55);
+          font-family: 'Tajawal', sans-serif;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          margin-top: 10px;
+        }
+
+        .rm-btn-back:hover:not(:disabled) {
+          border-color: rgba(0, 120, 255, 0.4);
+          color: rgba(0, 80, 200, 0.85);
+          background: rgba(0, 120, 255, 0.04);
+        }
+
+        .rm-spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: #ffffff;
+          border-radius: 50%;
+          animation: rm-spin 0.7s linear infinite;
+        }
+
+        @keyframes rm-spin {
+          to { transform: rotate(360deg); }
+        }
+
+        .rm-close {
+          position: absolute;
+          top: 20px;
+          left: 20px;
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
+          border: 1px solid rgba(0, 120, 255, 0.2);
+          background: rgba(0, 120, 255, 0.05);
+          color: rgba(0, 80, 180, 0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          font-size: 18px;
+          transition: all 0.2s;
+          line-height: 1;
+          z-index: 20;
+        }
+
+        .rm-close:hover {
+          border-color: rgba(0, 120, 255, 0.5);
+          color: rgba(0, 80, 180, 0.9);
+          background: rgba(0, 120, 255, 0.1);
+        }
+
+        .rm-divider {
+          text-align: center;
+          color: rgba(0, 60, 160, 0.5);
+          font-size: 13px;
+          margin-top: 20px;
+        }
+
+        .rm-link {
+          color: rgba(0, 100, 220, 0.9);
+          font-weight: 700;
+          cursor: pointer;
+          text-decoration: underline;
+          text-underline-offset: 3px;
+          transition: color 0.2s;
+        }
+
+        .rm-link:hover { color: #0044cc; }
+
+        .rm-field-group {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          margin-bottom: 20px;
+        }
+
+        .rm-otp-title {
+          text-align: center;
+          color: #0d2b5e;
+          font-size: 18px;
+          font-weight: 800;
+          margin-bottom: 6px;
+        }
+
+        .rm-otp-sub {
+          text-align: center;
+          color: rgba(0, 80, 180, 0.6);
+          font-size: 13px;
+          line-height: 1.6;
+          margin-bottom: 28px;
+        }
+
+        .rm-otp-phone {
+          color: #0055dd;
+          font-weight: 700;
+          direction: ltr;
+          display: inline-block;
+        }
+
+        .rm-otp-inputs {
+          display: flex;
+          justify-content: center;
+          gap: 10px;
+          margin-bottom: 20px;
+          direction: ltr;
+        }
+
+        .rm-otp-box {
+          width: 52px;
+          height: 60px;
+          border: 1.5px solid rgba(0, 120, 255, 0.2);
+          border-radius: 14px;
+          background: #f4f8ff;
+          text-align: center;
+          font-size: 22px;
+          font-weight: 800;
+          font-family: 'Tajawal', sans-serif;
+          color: #0055dd;
+          outline: none;
+          transition: all 0.2s ease;
+          caret-color: transparent;
+        }
+
+        .rm-otp-box:focus {
+          border-color: rgba(0, 120, 255, 0.7);
+          background: #eef4ff;
+          box-shadow: 0 0 0 3px rgba(0, 120, 255, 0.12);
+        }
+
+        .rm-otp-box.filled {
+          border-color: rgba(0, 120, 255, 0.5);
+          background: #e8f0ff;
+        }
+
+        @keyframes rm-shake {
+          0%, 100% { transform: translateX(0); }
+          30%, 60%, 90% { transform: translateX(5px); }
+        }
+
+        .rm-otp-shake { animation: rm-shake 0.4s ease; }
+
+        .rm-resend {
+          text-align: center;
+          font-size: 13px;
+          color: rgba(0, 80, 180, 0.5);
+          margin-top: 16px;
+        }
+
+        .rm-resend-btn {
+          background: none;
+          border: none;
+          cursor: pointer;
+          font-family: 'Tajawal', sans-serif;
+          font-size: 13px;
+          font-weight: 700;
+          padding: 0;
+          transition: all 0.2s;
+        }
+
+        .rm-resend-btn:disabled { color: rgba(0, 80, 180, 0.25); cursor: not-allowed; }
+        .rm-resend-btn:not(:disabled) { color: rgba(0, 100, 220, 0.85); }
+        .rm-resend-btn:not(:disabled):hover { color: #0044cc; }
+
+        .rm-success {
+          text-align: center;
+          padding: 20px 0;
+        }
+
+        .rm-success-ring {
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          border: 2px solid rgba(0, 160, 80, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 16px;
+          background: rgba(0, 160, 80, 0.08);
+          box-shadow: 0 0 30px rgba(0, 160, 80, 0.15);
+          animation: rm-success-pulse 1.5s ease infinite;
+        }
+
+        @keyframes rm-success-pulse {
+          0%, 100% { box-shadow: 0 0 20px rgba(0, 160, 80, 0.15); }
+          50% { box-shadow: 0 0 40px rgba(0, 160, 80, 0.3); }
+        }
+
+        .rm-success-title {
+          color: #007a3d;
+          font-size: 20px;
+          font-weight: 800;
+          margin-bottom: 8px;
+        }
+
+        .rm-success-sub {
+          color: rgba(0, 120, 60, 0.6);
+          font-size: 13px;
+        }
+
+        .rm-otp-loading {
+          display: flex;
+          justify-content: center;
+          gap: 6px;
+          padding: 12px 0;
+        }
+
+        .rm-otp-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: rgba(0, 120, 255, 0.5);
+          animation: rm-dot-bounce 1.2s ease-in-out infinite;
+        }
+
+        .rm-otp-dot:nth-child(2) { animation-delay: 0.15s; }
+        .rm-otp-dot:nth-child(3) { animation-delay: 0.3s; }
+
+        @keyframes rm-dot-bounce {
+          0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+          40% { transform: scale(1); opacity: 1; }
+        }
+
+        .rm-slide-enter {
+          animation: rm-slideIn 0.3s ease;
+        }
+
+        @keyframes rm-slideIn {
+          from { opacity: 0; transform: translateX(-16px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+      `}</style>
+
+      <div className="rm-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="rm-card" onClick={(e) => e.stopPropagation()}>
+
+          {/* Glow */}
+          <div className="rm-header-glow" />
+
+          {/* Close */}
+          <button className="rm-close" onClick={onClose} aria-label="إغلاق">×</button>
+
+          {/* Header */}
+          <div className="rm-header">
+            <div className="rm-logo-ring">
+              <i className="fas fa-fingerprint" style={{ color: '#0066ff', fontSize: '24px' }} />
+            </div>
+            <h2 className="rm-title">
+              {step === 3 ? 'تأكيد البريد الإلكتروني' : 'إنشاء حساب جديد'}
+            </h2>
+            <p className="rm-subtitle">
+              {step === 1 && 'الخطوة 1 — بيانات الكيان'}
+              {step === 2 && 'الخطوة 2 — بيانات الدخول'}
+              {step === 3 && 'الخطوة 3 — التحقق بالرمز'}
+            </p>
+          </div>
+
+          {/* Progress */}
+          <div className="rm-steps">
+            {[1, 2, 3].map((s, i) => (
+              <React.Fragment key={s}>
+                <div className={`rm-step-dot ${step > s ? 'done' : step === s ? 'active' : ''}`}>
+                  {step > s ? '✓' : s}
+                </div>
+                {i < 2 && (
+                  <div className={`rm-step-line ${step > s ? 'done' : ''}`} />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* Body */}
+          <div className="rm-body">
+            <form onSubmit={handleSubmit}>
+
+              {/* ── Step 1 ── */}
+              {step === 1 && (
+                <div className="rm-slide-enter">
+                  <div className="rm-field-group">
+
+                    {/* Association Name */}
+                    <div>
+                      <label className="rm-label">اسم الكيان</label>
+                      <input
+                        ref={firstInputRef}
+                        type="text"
+                        placeholder="اسم الجمعية أو المؤسسة"
+                        value={formData.associationName}
+                        onChange={(e) => handleChange('associationName', e.target.value)}
+                        onFocus={() => setFocusedField('name')}
+                        onBlur={() => setFocusedField(null)}
+                        className="rm-input"
+                        autoComplete="organization"
+                      />
+                    </div>
+
+                    {/* Entity Type */}
+                    <div>
+                      <label className="rm-label">نوع الكيان</label>
+                      <div className="rm-entity-grid">
+                        {ENTITY_TYPES.map((et) => (
+                          <button
+                            key={et.value}
+                            type="button"
+                            className={`rm-entity-btn ${formData.entityType === et.value ? 'selected' : ''}`}
+                            onClick={() => handleChange('entityType', et.value)}
+                          >
+                            <span style={{ fontSize: '18px' }}>{et.icon}</span>
+                            {et.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Phone + License */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' ,
+                        direction: 'ltr', textAlign: 'right',
+                          borderColor: formData.phone.length > 0 && formData.phone.length < 10
+                            ? 'rgba(239,68,68,0.5)'
+                            : formData.phone.length === 10
+                            ? 'rgba(34,197,94,0.5)'
+                            : undefined
+                        }}>
+                      <div>
+                        <label className="rm-label">رقم الجوال</label>
+                        <input
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                          type="tel"
+                          placeholder="05xxxxxxxx"
+                          value={formData.phone}
+                          onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        handleChange('phone', val);
+                      }}
+                      onKeyPress={(e) => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }}
+                          onFocus={() => setFocusedField('phone')}
+                          onBlur={() => setFocusedField(null)}
+                          className="rm-input"
+                          style={{ direction: 'ltr', textAlign: 'right' }}
+                          maxLength={10}
+                          autoComplete="tel"
+                        />
+                      </div>
+                      <div>
+                        <label className="rm-label">رقم الترخيص</label>
+                        <div>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            placeholder="أرقام فقط"
+                            value={formData.license}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                              handleChange('license', val);
+                            }}
+                            onKeyPress={(e) => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }}
+                            onFocus={() => setFocusedField('license')}
+                            onBlur={() => setFocusedField(null)}
+                            className="rm-input"
+                            maxLength={10}
+                          />
+                          <p style={{ fontSize: 11, color: formData.license.length >= 5 ? '#10b981' : '#94a3b8', margin: '3px 0 0', textAlign: 'left' }}>
+                            {formData.license.length}/10
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {error && (
+                    <div className="rm-error">
+                      <span>⚠</span>
+                      <span>{error}</span>
+                    </div>
+                  )}
+
+                  <button type="button" className="rm-btn-primary" onClick={handleNextStep}>
+                    التالي
+                    <span style={{ fontSize: '16px' }}>←</span>
+                  </button>
+                </div>
+              )}
+
+              {/* ── Step 2 ── */}
+              {step === 2 && (
+                <div className="rm-slide-enter">
+                  <div className="rm-field-group">
+
+                    {/* Email */}
+                    <div>
+                      <label className="rm-label">البريد الإلكتروني</label>
+                      <input
+                        type="email"
+                        placeholder="your@email.com"
+                        value={formData.email}
+                        onChange={(e) => handleChange('email', e.target.value)}
+                        onFocus={() => setFocusedField('email')}
+                        onBlur={() => setFocusedField(null)}
+                        className="rm-input"
+                        style={{ direction: 'ltr', textAlign: 'right' }}
+                        autoComplete="email"
+                      />
+                    </div>
+
+                    {/* Password */}
+                    <div>
+                      <label className="rm-label">كلمة المرور</label>
+                      <div className="rm-pw-wrap">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder="8 أحرف على الأقل"
+                          value={formData.password}
+                          onChange={(e) => handleChange('password', e.target.value)}
+                          onFocus={() => setFocusedField('password')}
+                          onBlur={() => setFocusedField(null)}
+                          className="rm-input"
+                          style={{ paddingLeft: '44px' }}
+                          autoComplete="new-password"
+                        />
+                        <button type="button" className="rm-pw-toggle" onClick={() => setShowPassword(!showPassword)}>
+                          {showPassword ? '🙈' : '👁️'}
+                        </button>
+                      </div>
+                      {formData.password && (
+                        <>
+                          <div className="rm-strength-bar">
+                            {[1, 2, 3].map((i) => (
+                              <div
+                                key={i}
+                                className="rm-strength-seg"
+                                style={{ background: i <= strength.level ? strength.color : 'rgba(0,120,255,0.1)' }}
+                              />
+                            ))}
+                          </div>
+                          <p style={{ fontSize: '11px', color: strength.color, margin: '5px 0 0', fontWeight: '700' }}>
+                            قوة كلمة المرور: {strength.label}
+                          </p>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Confirm Password */}
+                    <div>
+                      <label className="rm-label">تأكيد كلمة المرور</label>
+                      <div className="rm-pw-wrap">
+                        <input
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          placeholder="أعد كتابة كلمة المرور"
+                          value={formData.confirmPassword}
+                          onChange={(e) => handleChange('confirmPassword', e.target.value)}
+                          onFocus={() => setFocusedField('confirm')}
+                          onBlur={() => setFocusedField(null)}
+                          className="rm-input"
+                          style={{
+                            paddingLeft: '44px',
+                            borderColor: formData.confirmPassword && formData.password !== formData.confirmPassword
+                              ? 'rgba(255,77,109,0.5)'
+                              : undefined
+                          }}
+                          autoComplete="new-password"
+                        />
+                        <button type="button" className="rm-pw-toggle" onClick={() => setShowConfirmPassword(!showConfirmPassword)}>
+                          {showConfirmPassword ? '🙈' : '👁️'}
+                        </button>
+                      </div>
+                      {formData.confirmPassword && formData.password !== formData.confirmPassword && (
+                        <p style={{ fontSize: '12px', color: '#cc2244', margin: '5px 0 0', fontWeight: '600' }}>✗ كلمتا المرور غير متطابقتان</p>
+                      )}
+                      {formData.confirmPassword && formData.password === formData.confirmPassword && (
+                        <p style={{ fontSize: '12px', color: '#007a3d', margin: '5px 0 0', fontWeight: '600' }}>✓ كلمتا المرور متطابقتان</p>
+                      )}
+                    </div>
+
+                  </div>
+
+                  {error && (
+                    <div className="rm-error">
+                      <span>⚠</span>
+                      <span>{error}</span>
+                    </div>
+                  )}
+
+                  <button type="submit" className="rm-btn-primary" disabled={loading}>
+                    {loading ? (
+                      <>
+                        <div className="rm-spinner" />
+                        جاري إنشاء الحساب...
+                      </>
+                    ) : (
+                      <>
+                        <span>✓</span>
+                        إنشاء الحساب
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="rm-btn-back"
+                    onClick={() => { setStep(1); setError(null); }}
+                    disabled={loading}
+                  >
+                    <span>→</span>
+                    العودة للخطوة السابقة
+                  </button>
+                </div>
+              )}
+
+              {/* ── Step 3: OTP ── */}
+              {step === 3 && (
+                <div className="rm-slide-enter" dir="rtl">
+                  {verified ? (
+                    <div className="rm-success">
+                      <div className="rm-success-ring">
+                        <i className="fas fa-check" style={{ color: '#007a3d', fontSize: '32px' }} />
+                      </div>
+                      <p className="rm-success-title">تم التحقق بنجاح! 🎉</p>
+                      <p className="rm-success-sub">جاري إغلاق النافذة...</p>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="rm-otp-title">أدخل رمز التحقق</p>
+                      <p className="rm-otp-sub">
+                        تم إرسال رمز مكوّن من 6 أرقام إلى بريدك الإلكتروني
+                        <br />
+                        <span className="rm-otp-phone">{formData.email}</span>
+                      </p>
+
+                      {/* OTP boxes */}
+                      <div className="rm-otp-inputs" onPaste={handleOtpPaste}>
+                        {otp.map((digit, i) => (
+                          <input
+                            key={i}
+                            ref={el => { otpRefs.current[i] = el; }}
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={1}
+                            value={digit}
+                            onChange={e => handleOtpChange(i, e.target.value)}
+                            onKeyDown={e => handleOtpKeyDown(i, e)}
+                            className={`rm-otp-box ${digit ? 'filled' : ''} ${otpError ? 'rm-otp-shake' : ''}`}
+                            disabled={otpLoading}
+                            autoFocus={i === 0}
+                          />
+                        ))}
+                      </div>
+
+                      {otpError && (
+                        <div className="rm-error">
+                          <span>⚠</span>
+                          <span>{otpError}</span>
+                        </div>
+                      )}
+
+                      {otpLoading && (
+                        <div className="rm-otp-loading">
+                          <div className="rm-otp-dot" />
+                          <div className="rm-otp-dot" />
+                          <div className="rm-otp-dot" />
+                        </div>
+                      )}
+
+                      <div className="rm-resend">
+                        لم تستلم الرمز؟{' '}
+                        <button
+                          className="rm-resend-btn"
+                          onClick={handleResendOtp}
+                          disabled={resendCountdown > 0 || resendLoading || otpLoading}
+                          type="button"
+                        >
+                          {resendLoading
+                            ? 'جاري الإرسال...'
+                            : resendCountdown > 0
+                            ? `إعادة الإرسال بعد ${resendCountdown}ث`
+                            : 'إعادة إرسال الرمز'}
+                        </button>
+                      </div>
+
+                      {/* Edit email */}
+                      <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                        <button
+                          type="button"
+                          onClick={() => { setStep(2); setOtp(['', '', '', '', '', '']); setOtpError(null); }}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: 'rgba(0,80,180,0.45)', fontSize: '12px',
+                            fontFamily: 'Tajawal, sans-serif', fontWeight: 600
+                          }}
+                        >
+                          تعديل البريد الإلكتروني
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Switch to login — only on steps 1 & 2 */}
+              {step !== 3 && (
+                <div className="rm-divider">
+                  لديك حساب بالفعل؟{' '}
+                  <span className="rm-link" onClick={() => { onClose(); onSwitchToLogin(); }}>
+                    سجّل دخولك
+                  </span>
+                </div>
+              )}
+            </form>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ✅ نضيف import لـ React لأننا نستخدم React.Fragment
+import React from 'react';
