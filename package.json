@@ -2,7 +2,7 @@
   "name": "almosaadah-app",
   "private": false,
   "version": "1.0.0",
-  "homepage": "https://almosasadah.sa",
+  "homepage": "https://almosaadah.sa",
   "type": "module",
   "scripts": {
     "dev": "vite",
