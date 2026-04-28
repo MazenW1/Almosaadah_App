@@ -27,6 +27,8 @@ interface UseAuthReturn {
   signUp:         (email: string, password: string) => Promise<{ error: any }>;
   signOut:        () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
+  updatePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -446,6 +448,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfileLoading(false);
   }, []);
 
+  // ─── requestPasswordReset ─────────────────────────────────────────────────────
+  // يرسل بريد استعادة كلمة المرور
+  const requestPasswordReset = useCallback(async (email: string) => {
+    try {
+      if (!email || !EMAIL_REGEX.test(email))
+        return { success: false, error: 'صيغة البريد الإلكتروني غير صحيحة' };
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/reset-password`,
+      });
+
+      if (error) {
+        if (error.message.includes('not found') || error.message.includes('not_found'))
+          return { success: false, error: 'هذا البريد غير مسجّل في النظام' };
+        return { success: false, error: error.message || 'حدث خطأ أثناء الإرسال' };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('[useAuth] requestPasswordReset error:', err);
+      return { success: false, error: 'حدث خطأ غير متوقع' };
+    }
+  }, []);
+
+  // ─── updatePassword ────────────────────────────────────────────────────────────
+  // تحديث كلمة المرور (بعد التحقق من الرابط)
+  const updatePassword = useCallback(async (newPassword: string) => {
+    try {
+      if (!newPassword || newPassword.length < 8)
+        return { success: false, error: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل' };
+      if (!/[A-Za-z]/.test(newPassword) || !/[0-9]/.test(newPassword))
+        return { success: false, error: 'كلمة المرور يجب أن تحتوي على حروف وأرقام' };
+
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+      if (error) {
+        if (error.message.includes('session'))
+          return { success: false, error: 'انتهت صلاحية الجلسة. يرجى طلب رابط جديد' };
+        return { success: false, error: error.message || 'فشل في تحديث كلمة المرور' };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('[useAuth] updatePassword error:', err);
+      return { success: false, error: 'حدث خطأ غير متوقع' };
+    }
+  }, []);
+
   // ─── Computed roles ───────────────────────────────────────────────────────────
   const isAdmin = !!employeeProfile &&
     employeeProfile.employee_role?.toLowerCase().trim() === 'admin' &&
@@ -475,6 +525,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signUp,
     signOut,
     refreshProfile,
+    requestPasswordReset,
+    updatePassword,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
