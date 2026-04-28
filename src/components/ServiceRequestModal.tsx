@@ -194,6 +194,29 @@ const PRODUCT_ITEMS: Record<string, PackageItem[]> = {
     { icon: '📋', text: 'تقارير دورية احترافية' },
     { icon: '👨‍💼', text: 'فريق متخصص بخبرة +10 سنوات' },
   ],
+  'بكج المنحة التأسيسية': [
+    { icon: '📊', text: 'دراسة المشاريع المتقدمة' },
+    { icon: '👁️', text: 'متابعة التنفيذ الميداني' },
+    { icon: '📋', text: 'تقارير دورية احترافية' },
+    { icon: '👨‍💼', text: 'فريق متخصص بخبرة +10 سنوات' },
+  ],
+  'منحة المصروفات التشغيلية': [
+    { icon: '📊', text: 'دراسة المشاريع المتقدمة' },
+    { icon: '👁️', text: 'متابعة التنفيذ الميداني' },
+    { icon: '📋', text: 'تقارير دورية احترافية' },
+    { icon: '👨‍💼', text: 'فريق متخصص بخبرة +10 سنوات' },
+  ],
+  'منحة تطوع المحترفين': [
+    { icon: '🏛️', text: 'يجب أن تتجاوز الجمعية سنتين من تاريخ الترخيص للتأهل للمنحة.' },
+    { icon: '📊', text: 'يجب على الجمعية تقديم تقرير مفصّل عن الدعم السابق يشمل القوائم المالية المعتمدة إن وُجد.' },
+    { icon: '📝', text: 'يجب تقديم خطاب من مجلس الإدارة يتضمن التحديات وخدمات المتطوع المحترف المطلوبة وتكاليف انتدابه.' },
+    { icon: '🤝', text: 'يجب أن تتوافق خبرات ومؤهلات المتطوع المحترف مع التحديات التي تواجهها الجمعية.' },
+    { icon: '👥', text: 'يجب أن يكون لدى الجمعية فريق إداري مؤهل لتنفيذ التدخلات المقدمة من المتطوع المحترف.' },
+    { icon: '📋', text: 'تلتزم الجمعية بتنفيذ خطة العمل للتدخلات المدعومة خلال مدة محددة.' },
+    { icon: '💰', text: 'تُصرف المنحة دفعة واحدة بحد أعلى 500,000 ريال مع مراعاة حجم الجمعية وجاهزيتها وتوفر الممكّنات.' },
+    { icon: '🚫', text: 'إخلاء المسؤولية: الخدمة استشارية ولا تضمن قبول طلب المنحة، حيث يعتمد القبول على الصندوق.' },
+    { icon: '📩', text: 'بالنقر على "أوافق"، أقر بموافقتي على جميع الشروط والأحكام.' },
+  ],
   'برنامج تأهيل برو': [
     { icon: '🎯', text: 'تهدف الخدمة إلى تأهيل مشاريعك وفق معايير صندوق دعم الجمعيات للمنافسة' },
   { icon: '🤝', text: 'يعتمد نجاح التأهيل على التزامك بتوفير البيانات وتنفيذ التوصيات' },
@@ -219,6 +242,7 @@ interface ServiceRequestModalProps {
 
 interface ServiceRequestData {
   serviceName: string;
+  serviceId?: string;         // ✅ أضفنا service_id
   serviceDescription: string;
   contractUrl: string;
   notes: string;
@@ -241,6 +265,8 @@ export function ServiceRequestModal({
   const [selectedPackage, setSelectedPackage] = useState<string>('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [duplicateAlert, setDuplicateAlert] = useState<{ show: boolean; statusText: string }>({ show: false, statusText: '' });
+  const [successScreen, setSuccessScreen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const isAwnProduct = isProduct && productType === 'عون';
@@ -296,30 +322,68 @@ export function ServiceRequestModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // شرطك الحالي (ممتاز لمنع الإرسال بالخطأ)
     if (!agreedToTerms) {
       alert('يرجى الموافقة على البنود أولاً');
+      return;
+    }
+
+    if (!userId) {
+      alert('يرجى تسجيل الدخول أولاً');
       return;
     }
 
     setLoading(true);
 
     try {
+      // ✅ التحقق من وجود طلب مسبق نشط لنفس الخدمة
+      const { data: serviceData } = await supabase
+        .from('services')
+        .select('service_id')
+        .eq('service_name', serviceName)
+        .maybeSingle();
+
+      if (serviceData?.service_id) {
+        const { data: existingRequest } = await supabase
+          .from('service_requests')
+          .select('request_id, request_status')
+          .eq('user_id', userId)
+          .eq('service_id', serviceData.service_id)
+          .in('request_status', ['pending_review', 'in_progress', 'approved'])
+          .maybeSingle();
+
+        if (existingRequest) {
+          const statusText = existingRequest.request_status === 'pending_review' ? 'قيد المراجعة'
+            : existingRequest.request_status === 'in_progress' ? 'قيد التنفيذ'
+            : 'نشط';
+          setDuplicateAlert({ show: true, statusText });
+          setLoading(false);
+          return;
+        }
+      }
+
       await onSubmit({
         serviceName,
+        serviceId:          serviceData?.service_id || undefined, // ✅ نمرر service_id
         serviceDescription: service?.description || '',
-        contractUrl: service?.contract_pdf_url || '',
+        contractUrl:        service?.contract_pdf_url || '',
         notes,
         file: null,
         packageType: isAwnProduct ? selectedPackage : undefined,
-        
-        // إرسال التوثيق للداتا بيز
-        terms_accepted: true, 
-        terms_version: "1.0", 
-        accepted_at: new Date().toISOString(), 
+        terms_accepted: true,
+        terms_version: "1.0",
+        accepted_at: new Date().toISOString(),
       });
 
-      // ... باقي الكود (مسح الحقول وإغلاق النافذة)
+      // ✅ إظهار شاشة النجاح داخل الـ Modal
+      setSuccessScreen(true);
+      setTimeout(() => {
+        setSuccessScreen(false);
+        setNotes('');
+        setAgreedToTerms(false);
+        setSelectedPackage('');
+        onClose();
+      }, 3200);
+
     } catch (err) {
       console.error('Submission error:', err);
     } finally {
@@ -348,7 +412,239 @@ export function ServiceRequestModal({
   const currentItems = getCurrentItems();
   const selectedPackageInfo = getSelectedPackageInfo();
 
+  // ── شاشة تنبيه الطلب المكرر (overlay كامل) ─────────────────────────────
+  if (duplicateAlert.show) {
+    return (
+      <div
+        style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(15,23,42,0.85)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px',
+        }}
+      >
+        <div style={{
+          background: 'linear-gradient(135deg, #fff7ed, #ffedd5)',
+          border: '2px solid #fed7aa',
+          borderRadius: '28px',
+          padding: '48px 40px',
+          width: '90%',
+          maxWidth: '460px',
+          textAlign: 'center',
+          boxShadow: '0 30px 80px rgba(234,88,12,0.25)',
+          animation: 'successPop 0.45s cubic-bezier(.4,1.4,.6,1) both',
+          position: 'relative',
+          overflow: 'hidden',
+        }}>
+          {/* دوائر ديكورية */}
+          <div style={{ position: 'absolute', top: '-40px', right: '-40px', width: '160px', height: '160px', borderRadius: '50%', background: 'rgba(234,88,12,0.07)' }} />
+          <div style={{ position: 'absolute', bottom: '-30px', left: '-30px', width: '120px', height: '120px', borderRadius: '50%', background: 'rgba(234,88,12,0.05)' }} />
+
+          {/* أيقونة التحذير */}
+          <div style={{
+            width: '90px', height: '90px',
+            background: 'linear-gradient(135deg, #ea580c, #f97316)',
+            borderRadius: '50%',
+            margin: '0 auto 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 12px 40px rgba(234,88,12,0.35)',
+            animation: 'checkBounce 0.5s 0.2s cubic-bezier(.4,1.4,.6,1) both',
+          }}>
+            <i className="fas fa-exclamation" style={{ color: '#fff', fontSize: '38px' }} />
+          </div>
+
+          {/* العنوان */}
+          <h2 style={{
+            fontFamily: "'Tajawal', sans-serif",
+            fontSize: '22px', fontWeight: '900',
+            color: '#9a3412', margin: '0 0 10px',
+          }}>
+            يوجد طلب نشط لهذه الخدمة
+          </h2>
+
+          {/* الحالة */}
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: '8px',
+            background: '#ea580c', borderRadius: '50px',
+            padding: '7px 20px', margin: '0 0 16px',
+          }}>
+            <i className="fas fa-circle" style={{ color: '#fde68a', fontSize: '8px' }} />
+            <span style={{ fontFamily: "'Tajawal', sans-serif", fontWeight: '800', fontSize: '14px', color: '#fff' }}>
+              الحالة الحالية: {duplicateAlert.statusText}
+            </span>
+          </div>
+
+          {/* الرسالة */}
+          <p style={{
+            fontFamily: "'Tajawal', sans-serif",
+            fontSize: '14px', color: '#c2410c',
+            fontWeight: '600', lineHeight: '1.8',
+            margin: '0 0 24px',
+          }}>
+            لا يمكن تقديم طلب جديد لنفس الخدمة<br />
+            حتى يتم إغلاق الطلب الحالي.
+          </p>
+
+          {/* بادج التلميح */}
+          <div style={{
+            background: 'rgba(234,88,12,0.08)',
+            border: '1.5px solid #fed7aa',
+            borderRadius: '14px',
+            padding: '12px 18px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+            marginBottom: '28px',
+          }}>
+            <span style={{ fontSize: '18px' }}>💡</span>
+            <p style={{ margin: 0, fontFamily: "'Tajawal', sans-serif", fontSize: '13px', color: '#9a3412', fontWeight: '600' }}>
+              يمكنك متابعة طلبك من لوحة التحكم أو التواصل مع الإدارة
+            </p>
+          </div>
+
+          {/* زر الإغلاق */}
+          <button
+            type="button"
+            onClick={() => setDuplicateAlert({ show: false, statusText: '' })}
+            style={{
+              background: 'linear-gradient(135deg, #ea580c, #f97316)',
+              border: 'none', borderRadius: '14px',
+              padding: '14px 40px',
+              color: '#fff',
+              fontFamily: "'Tajawal', sans-serif",
+              fontSize: '15px', fontWeight: '800',
+              cursor: 'pointer',
+              boxShadow: '0 8px 25px rgba(234,88,12,0.35)',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            حسناً، فهمت
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!isOpen) return null;
+
+  // ── شاشة النجاح ──────────────────────────────────────────────────────────
+  if (successScreen) {
+    return (
+      <div
+        style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(15,23,42,0.85)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
+          zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px',
+        }}
+      >
+        <div
+          style={{
+            background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
+            border: '2px solid #86efac',
+            borderRadius: '28px',
+            padding: '48px 40px',
+            width: '90%',
+            maxWidth: '480px',
+            textAlign: 'center',
+            boxShadow: '0 30px 80px rgba(16,185,129,0.25)',
+            animation: 'successPop 0.45s cubic-bezier(.4,1.4,.6,1) both',
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+        >
+          {/* دوائر خلفية ديكورية */}
+          <div style={{ position: 'absolute', top: '-40px', right: '-40px', width: '160px', height: '160px', borderRadius: '50%', background: 'rgba(16,185,129,0.08)' }} />
+          <div style={{ position: 'absolute', bottom: '-30px', left: '-30px', width: '120px', height: '120px', borderRadius: '50%', background: 'rgba(16,185,129,0.06)' }} />
+
+          {/* أيقونة النجاح */}
+          <div style={{
+            width: '90px', height: '90px',
+            background: 'linear-gradient(135deg, #10b981, #059669)',
+            borderRadius: '50%',
+            margin: '0 auto 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 12px 40px rgba(16,185,129,0.4)',
+            animation: 'checkBounce 0.5s 0.3s cubic-bezier(.4,1.4,.6,1) both',
+          }}>
+            <i className="fas fa-check" style={{ color: '#fff', fontSize: '36px' }} />
+          </div>
+
+          {/* النص */}
+          <h2 style={{
+            fontFamily: "'Tajawal', sans-serif",
+            fontSize: '24px', fontWeight: '900',
+            color: '#065f46', margin: '0 0 12px',
+          }}>
+            تم استلام طلبك بنجاح! 🎉
+          </h2>
+          <p style={{
+            fontFamily: "'Tajawal', sans-serif",
+            fontSize: '15px', color: '#047857',
+            fontWeight: '600', lineHeight: '1.7',
+            margin: '0 0 28px',
+          }}>
+            شكراً لثقتك بنا.<br />
+            سيقوم فريقنا المتخصص بمراجعة طلبك والتواصل معك في أقرب وقت.
+          </p>
+
+          {/* بادجات */}
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '28px' }}>
+            {[
+              { icon: '📋', text: 'طلبك قيد المراجعة' },
+              { icon: '📞', text: 'سنتواصل معك قريباً' },
+            ].map((b, i) => (
+              <div key={i} style={{
+                background: 'rgba(16,185,129,0.1)',
+                border: '1.5px solid #6ee7b7',
+                borderRadius: '50px',
+                padding: '8px 16px',
+                display: 'flex', alignItems: 'center', gap: '6px',
+                fontFamily: "'Tajawal', sans-serif",
+                fontSize: '13px', fontWeight: '700',
+                color: '#065f46',
+              }}>
+                <span>{b.icon}</span>
+                <span>{b.text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* شريط التقدم */}
+          <div style={{ background: 'rgba(16,185,129,0.15)', borderRadius: '50px', height: '6px', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%',
+              background: 'linear-gradient(90deg, #10b981, #059669)',
+              borderRadius: '50px',
+              animation: 'progressBar 3.2s linear forwards',
+            }} />
+          </div>
+          <p style={{ fontFamily: "'Tajawal', sans-serif", fontSize: '12px', color: '#6ee7b7', marginTop: '10px', fontWeight: '600' }}>
+            سيتم إغلاق هذه النافذة تلقائياً...
+          </p>
+
+          <style>{`
+            @keyframes successPop {
+              from { opacity: 0; transform: scale(0.85) translateY(20px); }
+              to   { opacity: 1; transform: scale(1) translateY(0); }
+            }
+            @keyframes checkBounce {
+              from { opacity: 0; transform: scale(0.4); }
+              to   { opacity: 1; transform: scale(1); }
+            }
+            @keyframes progressBar {
+              from { width: 0%; }
+              to   { width: 100%; }
+            }
+          `}</style>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -838,6 +1134,10 @@ export function ServiceRequestModal({
         </form>
 
         <style>{`
+          @keyframes srAlertIn {
+            from { opacity: 0; transform: translateY(-12px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+          }
           @keyframes dropdownSlide {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }

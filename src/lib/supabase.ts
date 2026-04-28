@@ -1,163 +1,267 @@
 import { createClient } from '@supabase/supabase-js'
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Environment Validation ═════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// ── التحقق من وجود المتغيرات ──
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('[Supabase] VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY مطلوبان في ملف .env')
+}
 
-// ─── Admin Client (service_role) ── للعمليات الإدارية فقط (إنشاء مستخدمين)
-// ⚠️ أضف VITE_SUPABASE_SERVICE_ROLE_KEY في ملف .env من Supabase Dashboard > Settings > API
-const supabaseServiceKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || '';
-export const supabaseAdmin = supabaseServiceKey
-  ? createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    })
-  : null;
+// ── التحقق من صحة URL ──
+try {
+  const parsed = new URL(supabaseUrl)
+  if (!parsed.hostname.endsWith('.supabase.co')) {
+    throw new Error('[Supabase] VITE_SUPABASE_URL يجب أن ينتهي بـ .supabase.co')
+  }
+} catch {
+  throw new Error('[Supabase] VITE_SUPABASE_URL غير صالح')
+}
+
+// ── التحقق من الـ ANON KEY ──
+try {
+  const parts = supabaseAnonKey.split('.')
+  if (parts.length === 3) {
+    const payload = JSON.parse(atob(parts[1]))
+    if (payload?.role === 'service_role') {
+      throw new Error('[Supabase] ⛔ VITE_SUPABASE_ANON_KEY يحتوي على service_role key!')
+    }
+  }
+} catch (e: any) {
+  if (e.message.includes('service_role')) throw e
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+    storageKey: 'sb-session',
+  },
+  global: {
+    headers: {
+      'X-Client-Info': 'almosaadah-web/1.0',
+    },
+  },
+})
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Types Definitions (جميع الجداول) ══════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── News ─────────────────────────────────────────────────────────────────────
+// ─── Notifications ─────────────────────────────────────────────────────────────
+export interface Notification {
+  id: string
+  user_id: string
+  type: string
+  title: string
+  body?: string
+  data?: Record<string, any>
+  is_read: boolean
+  created_at: string
+}
+
+// ─── News ──────────────────────────────────────────────────────────────────────
 export interface News {
-  id: string;
-  title: string;
-  excerpt: string;
-  date: string;
-  image: string;
-  category: string;
-  tweet?: string;
-  device_info?: string;
-  timestamp?: number;
-  created_by?: string;
+  id: string
+  title: string
+  excerpt: string
+  date: string
+  image: string
+  category: string
+  tweet?: string
+  device_info?: string
+  timestamp?: number
+  created_by?: string
 }
 
 // ─── Services ─────────────────────────────────────────────────────────────────
 export interface Service {
-  service_id: string;
-  service_name: string;
-  service_description: string;
-  category?: string;
-  icon?: string;
-  is_active: boolean;
-  created_at?: string;
+  service_id: string
+  service_name: string
+  service_description: string
+  category?: string
+  icon?: string
+  is_active: boolean
+  created_at?: string
 }
 
 // ─── Service Requests ─────────────────────────────────────────────────────────
 export interface ServiceRequest {
-  request_id: string;
-  user_id: string;
-  service_id?: string;
-  request_notes?: string;
-  contract_url?: string;
-  contract_file_name?: string;
-  request_status: string;
-  admin_notes?: string;
-  employee_id?: string;
-  assigned_to?: string;
-  created_at: string;
-  updated_at?: string;
-  package_type?: string;
-  terms_accepted?: boolean;
-  terms_version?: string;
-  accepted_at?: string;
-  user?: { association_name: string; user_email: string; user_phone?: string };
-  services?: { service_name: string; service_description?: string };
-  employees?: { employee_name: string };
+  request_id: string
+  user_id: string
+  service_id?: string
+  request_notes?: string
+  contract_url?: string
+  contract_file_name?: string
+  request_status: string
+  admin_notes?: string
+  employee_id?: string
+  assigned_to?: string
+  created_at: string
+  updated_at?: string
+  package_type?: string
+  terms_accepted?: boolean
+  terms_version?: string
+  accepted_at?: string
+  user?: { association_name: string; user_email: string; user_phone?: string }
+  services?: { service_name: string; service_description?: string }
+  employees?: { employee_name: string }
 }
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export interface User {
-  user_id: string;
-  association_name: string;
-  user_email: string;
-  user_phone?: string;
-  license_number?: string;
-  entity_type: string;
-  created_at?: string;
-  is_review_blocked?: boolean;
+  user_id: string
+  association_name: string
+  user_email: string
+  user_phone?: string
+  license_number?: string
+  entity_type: string
+  created_at?: string
+  is_review_blocked?: boolean
 }
 
 // ─── Employees ────────────────────────────────────────────────────────────────
 export interface Employee {
-  employee_id: string;
-  employee_name: string;
-  employee_email: string;
-  employee_phone?: string;
-  employee_role: string;
-  is_active: boolean;
-  created_at?: string;
-  section?: string;
+  employee_id: string
+  employee_name: string
+  employee_email: string
+  employee_phone?: string
+  employee_role: string
+  is_active: boolean
+  created_at?: string
+  section?: string
 }
 
-// ─── Reviews (جدول جديد) ──────────────────────────────────────────────────────
+// ─── Reviews ──────────────────────────────────────────────────────────────────
 export interface Review {
-  id: string;
-  user_id: string;
-  rating: number;
-  review_text?: string;
-  is_active: boolean;
-  is_hidden?: boolean;
-  created_at: string;
-  updated_at?: string;
+  id: string
+  user_id: string
+  rating: number
+  review_text?: string
+  is_active: boolean
+  is_hidden?: boolean
+  created_at: string
+  updated_at?: string
   user?: {
-    association_name: string;
-  };
+    association_name: string
+  }
 }
 
-// ─── Projects (جدول جديد) ─────────────────────────────────────────────────────
+// ─── Projects ─────────────────────────────────────────────────────────────────
 export interface Project {
-  id: string;
-  user_id: string;
-  project_name: string;
-  duration?: string;
-  budget?: string;
-  target_area?: string;
-  project_type: string;
-  project_file_url?: string;
-  file_name?: string;
-  status: 'pending' | 'approved' | 'rejected';
-  is_active: boolean;
-  created_at: string;
-  updated_at?: string;
+  id: string
+  user_id: string
+  project_name: string
+  duration?: string
+  budget?: string
+  target_area?: string
+  project_type: string
+  project_file_url?: string
+  file_name?: string
+  status: 'pending' | 'approved' | 'rejected'
+  is_active: boolean
+  created_at: string
+  updated_at?: string
   user?: {
-    association_name: string;
-  };
+    association_name: string
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Auth Helpers ══════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const signIn = (email: string, password: string) =>
-  supabase.auth.signInWithPassword({ email, password });
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/
 
-export const signUp = (email: string, password: string) =>
-  supabase.auth.signUp({ email, password });
+export const signIn = (email: string, password: string) => {
+  if (!EMAIL_REGEX.test(email) || email.length > 254) {
+    return Promise.resolve({ data: null, error: new Error('صيغة البريد الإلكتروني غير صحيحة') })
+  }
+  if (password.length < 6 || password.length > 128) {
+    return Promise.resolve({ data: null, error: new Error('كلمة المرور غير صالحة') })
+  }
+  return supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
+}
 
-export const signOut = () => supabase.auth.signOut();
+export const signUp = (email: string, password: string) => {
+  if (!EMAIL_REGEX.test(email) || email.length > 254) {
+    return Promise.resolve({ data: null, error: new Error('صيغة البريد الإلكتروني غير صحيحة') })
+  }
+  if (password.length < 8 || password.length > 128) {
+    return Promise.resolve({ data: null, error: new Error('كلمة المرور يجب أن تكون 8 أحرف على الأقل') })
+  }
+  return supabase.auth.signUp({ email: email.trim().toLowerCase(), password })
+}
 
-export const getSession = () => supabase.auth.getSession();
+export const signOut = () => supabase.auth.signOut()
+export const getSession = () => supabase.auth.getSession()
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Notifications Operations ════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const fetchNotifications = (userId: string, limit = 50) =>
+  supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+export const createNotification = (notification: {
+  user_id: string
+  type: string
+  title: string
+  body?: string
+  data?: Record<string, any>
+}) =>
+  supabase.from('notifications').insert([{
+    ...notification,
+    is_read: false,
+    created_at: new Date().toISOString(),
+  }])
+
+export const markNotificationAsRead = (id: string) =>
+  supabase.from('notifications').update({ is_read: true }).eq('id', id)
+
+export const markAllNotificationsAsRead = (userId: string) =>
+  supabase.from('notifications')
+    .update({ is_read: true })
+    .eq('user_id', userId)
+    .eq('is_read', false)
+
+export const deleteNotification = (id: string) =>
+  supabase.from('notifications').delete().eq('id', id)
+
+export const deleteAllNotifications = (userId: string) =>
+  supabase.from('notifications').delete().eq('user_id', userId)
+
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ News Operations ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const fetchNews = (limit = 6, offset = 0) =>
-  supabase
+export const fetchNews = (limit = 6, offset = 0) => {
+  const safeLimit = Math.min(Math.max(1, limit), 50)
+  const safeOffset = Math.max(0, offset)
+  return supabase
     .from('news')
-    .select('*')
+    .select('id, title, excerpt, date, image, category, tweet, timestamp')
     .order('timestamp', { ascending: false, nullsFirst: false })
-    .range(offset, offset + limit - 1);
+    .range(safeOffset, safeOffset + safeLimit - 1)
+}
 
 export const createNews = (news: Omit<News, 'id'>) =>
-  supabase.from('news').insert([news]);
+  supabase.from('news').insert([news])
 
 export const deleteNews = (id: string) =>
-  supabase.from('news').delete().eq('id', id);
+  supabase.from('news').delete().eq('id', id)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Services Operations ═══════════════════════════════════════════════════════
@@ -167,7 +271,7 @@ export const fetchServices = () =>
   supabase
     .from('services')
     .select('*')
-    .eq('is_active', true);
+    .eq('is_active', true)
 
 export const fetchServiceById = (id: string) =>
   supabase
@@ -175,7 +279,7 @@ export const fetchServiceById = (id: string) =>
     .select('*')
     .eq('service_id', id)
     .eq('is_active', true)
-    .single();
+    .single()
 
 export const fetchServiceByName = (name: string) =>
   supabase
@@ -183,26 +287,26 @@ export const fetchServiceByName = (name: string) =>
     .select('service_id, service_name, service_description')
     .eq('service_name', name)
     .eq('is_active', true)
-    .maybeSingle();
+    .maybeSingle()
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Service Requests Operations ═══════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const createServiceRequest = (request: {
-  user_id: string;
-  service_id?: string;
-  request_notes?: string;
-  request_status?: string;
-  package_type?: string;
-  terms_accepted?: boolean;
-  terms_version?: string;
-  accepted_at?: string;
+  user_id: string
+  service_id?: string
+  request_notes?: string
+  request_status?: string
+  package_type?: string
+  terms_accepted?: boolean
+  terms_version?: string
+  accepted_at?: string
 }) =>
   supabase.from('service_requests').insert([{
     ...request,
-    request_status: request.request_status || 'pending_review',
-  }]);
+    request_status: 'pending_review',
+  }])
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ User Operations ═══════════════════════════════════════════════════════════
@@ -211,22 +315,22 @@ export const createServiceRequest = (request: {
 export const fetchUserProfile = (email: string) =>
   supabase
     .from('user')
-    .select('*')
+    .select('user_id, association_name, user_email, user_phone, entity_type, license_number, is_review_blocked')
     .eq('user_email', email)
-    .maybeSingle();
+    .maybeSingle()
 
 export const fetchUserById = (userId: string) =>
   supabase
     .from('user')
-    .select('*')
+    .select('user_id, association_name, user_email, user_phone, entity_type, license_number, is_review_blocked')
     .eq('user_id', userId)
-    .maybeSingle();
+    .maybeSingle()
 
 export const updateUserBlockStatus = (userId: string, is_blocked: boolean) =>
   supabase
     .from('user')
     .update({ is_review_blocked: is_blocked })
-    .eq('user_id', userId);
+    .eq('user_id', userId)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Employee Operations ═══════════════════════════════════════════════════════
@@ -235,194 +339,179 @@ export const updateUserBlockStatus = (userId: string, is_blocked: boolean) =>
 export const fetchEmployeeProfile = (email: string) =>
   supabase
     .from('employees')
-    .select('*')
+    .select('employee_id, employee_name, employee_email, employee_phone, employee_role, is_active, section')
     .eq('employee_email', email)
     .eq('is_active', true)
-    .maybeSingle();
+    .maybeSingle()
 
 export const fetchEmployeeById = (employeeId: string) =>
   supabase
     .from('employees')
-    .select('*')
+    .select('employee_id, employee_name, employee_email, employee_phone, employee_role, is_active, section')
     .eq('employee_id', employeeId)
-    .maybeSingle();
+    .maybeSingle()
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Reviews Operations (جديد) ═════════════════════════════════════════════════
+// ═══ Reviews Operations ═══════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * جلب جميع الآراء النشطة
- */
 export const fetchReviews = () =>
   supabase
     .from('reviews')
-    .select('*, user:user(association_name)')
+    .select('id, user_id, rating, review_text, is_active, created_at, user:user_id(association_name)')
     .eq('is_active', true)
-    .order('created_at', { ascending: false });
-/**
- * جلب آراء مستخدم معين
- */
+    .order('created_at', { ascending: false })
+
 export const fetchMyReviews = (userId: string) =>
   supabase
     .from('reviews')
-    .select('*')
+    .select('id, rating, review_text, is_active, created_at')
     .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
 
-/**
- * إضافة رأي جديد
- */
 export const createReview = (review: {
-  user_id: string;
-  rating: number;
-  review_text?: string;
-  is_active?: boolean;
-}) =>
-  supabase.from('reviews').insert([{
-    ...review,
+  user_id: string
+  rating: number
+  review_text?: string
+  is_active?: boolean
+}) => {
+  const safeRating = Math.min(5, Math.max(1, Math.round(review.rating)))
+  return supabase.from('reviews').insert([{
+    user_id: review.user_id,
+    rating: safeRating,
+    review_text: review.review_text?.slice(0, 1000) || null,
     is_active: review.is_active ?? true,
-  }]);
+  }])
+}
 
-/**
- * حذف رأي
- */
 export const deleteReview = (id: string) =>
-  supabase.from('reviews').delete().eq('id', id);
+  supabase.from('reviews').delete().eq('id', id)
 
-/**
- * تحديث حالة الرأي (تفعيل/إخفاء)
- */
 export const updateReviewStatus = (id: string, is_active: boolean) =>
-  supabase.from('reviews').update({ is_active }).eq('id', id);
+  supabase.from('reviews').update({ is_active }).eq('id', id)
 
-/**
- * تحديث نص الرأي
- */
-export const updateReview = (id: string, updates: Partial<Review>) =>
-  supabase.from('reviews').update(updates).eq('id', id);
+export const updateReview = (id: string, updates: Partial<Review>) => {
+  const { user_id, created_at, ...safeUpdates } = updates as any
+  return supabase.from('reviews').update(safeUpdates).eq('id', id)
+}
 
-/**
- * التحقق إذا كان المستخدم محظور من إضافة آراء
- */
 export const checkUserBlocked = (userId: string) =>
   supabase
     .from('user')
     .select('is_review_blocked')
     .eq('user_id', userId)
-    .single();
+    .single()
 
-/**
- * تبديل حالة حظر المستخدم
- */
 export const toggleUserBlockStatus = (userId: string, is_blocked: boolean) =>
   supabase
     .from('user')
     .update({ is_review_blocked: is_blocked })
-    .eq('user_id', userId);
+    .eq('user_id', userId)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Projects Operations (جديد) ════════════════════════════════════════════════
+// ═══ Projects Operations ═══════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * جلب المشاريع مع فلترة اختيارية بالنوع
- */
-// lib/supabase.ts — تأكد إن fetchProjects هكذا
 export const fetchProjects = (type?: string) => {
+  const ALLOWED_TYPES = ['emergency', 'development', 'social', 'seasonal', 'endowment']
   let query = supabase
     .from('projects')
-    .select('*, user:user(association_name)')  // ← user مو users
-    .order('created_at', { ascending: false });
+    .select('id, user_id, project_name, project_type, status, is_active, created_at, duration, budget, target_area, project_file_url, file_name, accreditation_body, user:user(association_name)')
+    .order('created_at', { ascending: false })
 
   if (type && type !== 'all') {
-    query = query.eq('project_type', type);
+    if (!ALLOWED_TYPES.includes(type)) return Promise.resolve({ data: [], error: new Error('نوع مشروع غير صالح') })
+    query = query.eq('project_type', type)
   }
-  return query;
-};
-/**
- * جلب مشاريع مستخدم معين
- */
+  return query
+}
+
 export const fetchMyProjects = (userId: string) =>
   supabase
     .from('projects')
-    .select('*')
+    .select('id, project_name, project_type, status, is_active, created_at, duration, budget, target_area')
     .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
 
-/**
- * إضافة مشروع جديد
- */
 export const createProject = (project: {
-  user_id: string;
-  project_name: string;
-  duration?: string;
-  budget?: string;
-  target_area?: string;
-  project_type: string;
-  project_file_url?: string | null;
-  file_name?: string | null;
-  status?: string;
-  is_active?: boolean;
+  user_id: string
+  project_name: string
+  duration?: string
+  budget?: string
+  target_area?: string
+  project_type: string
+  project_file_url?: string | null
+  file_name?: string | null
+  status?: string
+  is_active?: boolean
 }) =>
   supabase.from('projects').insert([{
     ...project,
-    status: project.status || 'pending',
+    status: 'pending',
     is_active: project.is_active ?? true,
-  }]);
+  }])
 
-/**
- * حذف مشروع
- */
 export const deleteProject = (id: string) =>
-  supabase.from('projects').delete().eq('id', id);
+  supabase.from('projects').delete().eq('id', id)
 
-/**
- * تحديث حالة المشروع
- */
-export const updateProjectStatus = (id: string, status: string) =>
-  supabase.from('projects').update({ status }).eq('id', id);
+export const updateProjectStatus = (id: string, status: string) => {
+  const ALLOWED_STATUSES = ['pending', 'approved', 'rejected']
+  if (!ALLOWED_STATUSES.includes(status)) {
+    return Promise.resolve({ data: null, error: new Error('حالة مشروع غير صالحة') })
+  }
+  return supabase.from('projects').update({ status }).eq('id', id)
+}
 
-/**
- * تحديث بيانات المشروع
- */
-export const updateProject = (id: string, updates: Partial<Project>) =>
-  supabase.from('projects').update(updates).eq('id', id);
+export const updateProject = (id: string, updates: Partial<Project>) => {
+  const { user_id, created_at, status, ...safeUpdates } = updates as any
+  return supabase.from('projects').update(safeUpdates).eq('id', id)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Storage Operations ════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * رفع صورة عامة
- */
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+const ALLOWED_DOC_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'application/zip',
+]
+
 export const uploadImage = async (bucket: string, file: File, path: string) => {
+  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) throw new Error('نوع الملف غير مسموح')
+  if (file.size > 5 * 1024 * 1024) throw new Error('حجم الصورة يجب أن يكون أقل من 5MB')
+
   const { data, error } = await supabase.storage
     .from(bucket)
-    .upload(path, file, { cacheControl: '3600', upsert: false });
+    .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
 
-  if (error) throw error;
+  if (error) throw error
 
-  const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
-  return urlData.publicUrl;
-};
+  const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path)
+  return urlData.publicUrl
+}
 
-/**
- * الحصول على رابط عام
- */
 export const getPublicUrl = (bucket: string, path: string) =>
-  supabase.storage.from(bucket).getPublicUrl(path);
+  supabase.storage.from(bucket).getPublicUrl(path)
 
-/**
- * رفع ملف للـ Projects (PDF, Word, Excel, إلخ)
- */
 export async function uploadProjectFile(file: File, userId: string) {
-  const timestamp = Date.now();
-  const ext = file.name.split('.').pop()?.toLowerCase();
-  const safeFileName = `${timestamp}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const filePath = `projects/${safeFileName}`;
+  if (!ALLOWED_DOC_TYPES.includes(file.type)) {
+    throw new Error('نوع الملف غير مسموح')
+  }
+  if (file.size > 20 * 1024 * 1024) throw new Error('حجم الملف يجب أن يكون أقل من 20MB')
 
-  const mimeTypes: Record<string, string> = {
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  const safeFileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`
+  const filePath = `projects/${userId}/${safeFileName}`
+
+  const MIME_TYPES: Record<string, string> = {
     pdf:  'application/pdf',
     doc:  'application/msword',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -432,57 +521,123 @@ export async function uploadProjectFile(file: File, userId: string) {
     pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     txt:  'text/plain',
     zip:  'application/zip',
-  };
-  const contentType = mimeTypes[ext || ''] || file.type;
+  }
+  const contentType = MIME_TYPES[ext || ''] || file.type
 
   const { data, error } = await supabase.storage
     .from('projects-files')
-    .upload(filePath, file, {
-      cacheControl: '3600',
-      upsert: false,
-      contentType,
-    });
+    .upload(filePath, file, { cacheControl: '3600', upsert: false, contentType })
 
   if (error) {
-    console.error('Upload error:', error);
-    throw error;
+    console.error('Upload error:', error.message)
+    throw new Error('فشل رفع الملف')
   }
 
   const { data: urlData } = supabase.storage
     .from('projects-files')
-    .getPublicUrl(filePath);
+    .getPublicUrl(filePath)
 
-  return { url: urlData.publicUrl, name: file.name };
+  return { url: urlData.publicUrl, name: file.name }
 }
 
-/**
- * حذف ملف من Storage
- */
 export const deleteStorageFile = async (bucket: string, path: string) => {
-  const { error } = await supabase.storage.from(bucket).remove([path]);
-  if (error) throw error;
-};
+  if (!path || path.includes('..') || path.startsWith('/')) {
+    throw new Error('مسار الملف غير صالح')
+  }
+  const { error } = await supabase.storage.from(bucket).remove([path])
+  if (error) throw error
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Real-time Subscriptions (اختياري) ════════════════════════════════════════
+// ═══ Real-time Subscriptions ═══════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * الاشتراك في تغييرات الآراء
- */
 export const subscribeToReviews = (callback: (payload: any) => void) => {
   return supabase
     .channel('reviews-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews' }, callback)
-    .subscribe();
-};
+    .subscribe()
+}
 
-/**
- * الاشتراك في تغييرات المشاريع
- */
 export const subscribeToProjects = (callback: (payload: any) => void) => {
   return supabase
     .channel('projects-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, callback)
-    .subscribe();
-};
+    .subscribe()
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Events Operations ═════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const fetchEvents = () =>
+  supabase
+    .from('events')
+    .select('*')
+    .order('event_date', { ascending: true })
+
+export const fetchMyEvents = (userId: string) =>
+  supabase
+    .from('events')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+
+export const createEvent = (event: Record<string, any>) =>
+  supabase.from('events').insert([{ ...event, is_active: true }]).select('id').single()
+
+export const deleteEvent = (id: string) =>
+  supabase.from('events').delete().eq('id', id)
+
+export const updateEventStatus = (id: string, status: string) =>
+  supabase.from('events').update({ status }).eq('id', id)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Jobs Operations ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const fetchJobs = () =>
+  supabase
+    .from('jobs')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+export const fetchMyJobs = (userId: string) =>
+  supabase
+    .from('jobs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+
+export const createJob = (job: Record<string, any>) =>
+  supabase.from('jobs').insert([job]).select('id').single()
+
+export const deleteJob = (id: string) =>
+  supabase.from('jobs').delete().eq('id', id)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Real-time: Events & Jobs ══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const subscribeToNotifications = (userId: string, callback: (payload: any) => void) =>
+  supabase
+    .channel('notifs_live_' + userId)
+    .on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'notifications',
+      filter: `user_id=eq.${userId}`,
+    }, callback)
+    .subscribe()
+
+export const subscribeToEvents = (callback: (payload: any) => void) =>
+  supabase
+    .channel('events-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, callback)
+    .subscribe()
+
+export const subscribeToJobs = (callback: (payload: any) => void) =>
+  supabase
+    .channel('jobs-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, callback)
+    .subscribe()
+    

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-
+import React from 'react';
 interface RegisterModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -21,8 +21,21 @@ interface RegisterData {
 const ENTITY_TYPES = [
   { value: 'جمعية أهلية', label: 'جمعية أهلية', icon: '🏛️' },
   { value: 'مؤسسة أهلية', label: 'مؤسسة أهلية', icon: '🏢' },
+  { value: 'شركة داعمة', label: 'شركة داعمة (مشغلة)', icon: '🤝' },
   { value: 'فرد', label: 'فرد', icon: '👤' },
 ];
+
+const ENTITY_NAME_PLACEHOLDER: Record<string, string> = {
+  'جمعية أهلية': 'اسم الجمعية الأهلية',
+  'مؤسسة أهلية': 'اسم المؤسسة الأهلية',
+  'شركة داعمة': 'اسم الشركة',
+  'فرد': 'الاسم الكامل',
+};
+
+const ALLOWED_ENTITY_TYPES = ['جمعية أهلية', 'مؤسسة أهلية', 'شركة داعمة', 'فرد'];
+const sanitizeText = (v: string): string => v.replace(/<[^>]*>/g, '').replace(/['"`;]/g, '').trim().slice(0, 200);
+const MAX_OTP_ATTEMPTS = 5;
+const MAX_RESEND_ATTEMPTS = 3;
 
 export function RegisterModal({
   isOpen,
@@ -45,6 +58,9 @@ export function RegisterModal({
   const [resendCountdown, setResendCountdown] = useState(60);
   const [resendLoading, setResendLoading] = useState(false);
   const [verified, setVerified] = useState(false);
+  const [otpAttempts, setOtpAttempts] = useState(0);
+  const [resendAttempts, setResendAttempts] = useState(0);
+  const [isBlocked, setIsBlocked] = useState(false);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const [formData, setFormData] = useState<RegisterData>({
@@ -91,10 +107,11 @@ export function RegisterModal({
 
   const validateStep1 = () => {
     const { associationName, phone, license, entityType } = formData;
-    if (!associationName.trim()) { setError('يرجى إدخال اسم الكيان'); return false; }
-    if (!entityType) { setError('يرجى اختيار نوع الكيان'); return false; }
+    const cleanName = sanitizeText(associationName);
+    if (!cleanName) { setError('يرجى إدخال اسم الكيان'); return false; }
+    if (!entityType || !ALLOWED_ENTITY_TYPES.includes(entityType)) { setError('يرجى اختيار نوع الكيان'); return false; }
     if (!/^05[0-9]{8}$/.test(phone)) { setError('رقم الجوال غير صحيح (يجب أن يبدأ بـ 05 ويكون 10 أرقام)'); return false; }
-    if (license.trim().length < 5) { setError('رقم الترخيص قصير جداً (5 أحرف على الأقل)'); return false; }
+    if (entityType !== 'فرد' && (license.trim().length < 1 || license.trim().length > 10)) { setError('رقم الترخيص يجب أن يكون بين 1 و 10 أرقام'); return false; }
     return true;
   };
 
@@ -138,55 +155,52 @@ export function RegisterModal({
     }
   };
 
-  // ✅ OTP Verification — type: 'signup' لأن المستخدم سجّل بـ signUp
   const verifyOtp = async (code: string) => {
+    if (isBlocked || otpAttempts >= MAX_OTP_ATTEMPTS) {
+      setIsBlocked(true);
+      setOtpError('تم إيقاف الحساب مؤقتاً لكثرة المحاولات.');
+      return;
+    }
+    if (!/^\d{6}$/.test(code)) return;
     setOtpLoading(true);
     setOtpError(null);
+
     try {
       const { supabase } = await import('../lib/supabase');
+
       const { data, error } = await supabase.auth.verifyOtp({
         email: formData.email,
         token: code,
-        type: 'signup', // ✅ مُصلح: كان 'email' والصح 'signup'
+        type: 'signup',
       });
-      if (error) throw error;
-      if (data.user) {
-        // ✅ إدخال بيانات المستخدم في DB فقط بعد تأكيد OTP
-        const pending = sessionStorage.getItem('pending_registration');
-        if (pending) {
-          const profileData = JSON.parse(pending);
-          await supabase.from('user').upsert([{
-            user_id: data.user.id,
-            association_name: profileData.association_name,
-            user_phone: profileData.user_phone,
-            user_email: profileData.user_email,
-            license_number: profileData.license_number,
-            entity_type: profileData.entity_type,
-            phone_verified: true,
-            phone_verified_at: new Date().toISOString(),
-          }], { onConflict: 'user_id' });
-          sessionStorage.removeItem('pending_registration');
-        } else {
-          await supabase.from('user').update({
-            phone_verified: true,
-            phone_verified_at: new Date().toISOString(),
-          }).eq('user_id', data.user.id);
-        }
 
-        setVerified(true);
-        setTimeout(() => {
-          onClose();
-        }, 2000);
+      if (error) throw error;
+
+      if (data.user) {
+        // البيانات تُحفظ تلقائياً عبر useAuth عند SIGNED_IN من sessionStorage
       }
+
+      setVerified(true);
+      setTimeout(() => {
+        onClose();
+      }, 2000);
+
     } catch (err: any) {
-      const msg = err.message?.includes('Token has expired')
+      const newAtt = otpAttempts + 1;
+      setOtpAttempts(newAtt);
+
+      if (newAtt >= MAX_OTP_ATTEMPTS) {
+        setIsBlocked(true);
+      }
+
+      const msg = err.message?.includes('expired')
         ? 'انتهت صلاحية الرمز، اطلب رمزاً جديداً'
-        : err.message?.includes('Invalid')
-        ? 'رمز التحقق غير صحيح، تحقق وأعد المحاولة'
-        : err.message || 'رمز التحقق غير صحيح';
-      setOtpError(msg);
+        : 'رمز التحقق غير صحيح، تحقق وأعد المحاولة';
+
+      setOtpError(newAtt >= MAX_OTP_ATTEMPTS ? 'تم إيقاف الحساب مؤقتاً لكثرة المحاولات.' : msg);
       setOtp(['', '', '', '', '', '']);
       otpRefs.current[0]?.focus();
+
     } finally {
       setOtpLoading(false);
     }
@@ -194,7 +208,11 @@ export function RegisterModal({
 
   // ✅ إعادة إرسال OTP — نستخدم resend بدل signInWithOtp
   const handleResendOtp = async () => {
-    if (resendCountdown > 0) return;
+    if (resendCountdown > 0 || isBlocked) return;
+    if (resendAttempts >= MAX_RESEND_ATTEMPTS) {
+      setOtpError('وصلت للحد الأقصى لإعادة الإرسال.');
+      return;
+    }
     setResendLoading(true);
     try {
       const { supabase } = await import('../lib/supabase');
@@ -205,9 +223,10 @@ export function RegisterModal({
       });
       if (error) throw error;
       setResendCountdown(60);
+      setResendAttempts(p => p + 1);
       setOtpError(null);
     } catch (err: any) {
-      setOtpError(err.message || 'فشل في إعادة إرسال الرمز');
+      setOtpError('فشل في إرسال الرمز. يرجى المحاولة لاحقاً.');
     } finally {
       setResendLoading(false);
     }
@@ -261,18 +280,24 @@ export function RegisterModal({
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
 
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            transition-duration: 0.01ms !important;
+          }
+        }
+
         .rm-overlay {
           position: fixed;
           inset: 0;
-          background: rgba(0, 40, 100, 0.55);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
+          background: rgba(0, 40, 100, 0.82);
           display: flex;
           align-items: center;
           justify-content: center;
           z-index: 9999;
           padding: 16px;
           animation: rm-fadeIn 0.25s ease;
+          isolation: isolate;
         }
 
         @keyframes rm-fadeIn {
@@ -475,7 +500,7 @@ export function RegisterModal({
 
         .rm-entity-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(2, 1fr);
           gap: 8px;
         }
 
@@ -711,9 +736,14 @@ export function RegisterModal({
         .rm-otp-inputs {
           display: flex;
           justify-content: center;
-          gap: 10px;
+          gap: clamp(4px, 2vw, 10px);
           margin-bottom: 20px;
           direction: ltr;
+        }
+
+        @media (max-width: 400px) {
+          .rm-otp-box { width: 40px; height: 48px; font-size: 18px; }
+          .rm-body { padding: 16px 16px 20px; }
         }
 
         .rm-otp-box {
@@ -888,23 +918,7 @@ export function RegisterModal({
                 <div className="rm-slide-enter">
                   <div className="rm-field-group">
 
-                    {/* Association Name */}
-                    <div>
-                      <label className="rm-label">اسم الكيان</label>
-                      <input
-                        ref={firstInputRef}
-                        type="text"
-                        placeholder="اسم الجمعية أو المؤسسة"
-                        value={formData.associationName}
-                        onChange={(e) => handleChange('associationName', e.target.value)}
-                        onFocus={() => setFocusedField('name')}
-                        onBlur={() => setFocusedField(null)}
-                        className="rm-input"
-                        autoComplete="organization"
-                      />
-                    </div>
-
-                    {/* Entity Type */}
+                    {/* Entity Type — أولاً حتى يتغير حقل الاسم بناءً على الاختيار */}
                     <div>
                       <label className="rm-label">نوع الكيان</label>
                       <div className="rm-entity-grid">
@@ -913,7 +927,11 @@ export function RegisterModal({
                             key={et.value}
                             type="button"
                             className={`rm-entity-btn ${formData.entityType === et.value ? 'selected' : ''}`}
-                            onClick={() => handleChange('entityType', et.value)}
+                            onClick={() => {
+                              handleChange('entityType', et.value);
+                              // امسح الاسم عند تغيير النوع لتجنب بيانات خاطئة
+                              handleChange('associationName', '');
+                            }}
                           >
                             <span style={{ fontSize: '18px' }}>{et.icon}</span>
                             {et.label}
@@ -922,61 +940,89 @@ export function RegisterModal({
                       </div>
                     </div>
 
-                    {/* Phone + License */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' ,
-                        direction: 'ltr', textAlign: 'right',
+                    {/* Association Name — يظهر بعد اختيار النوع مع label وplaceholder ديناميكيَّين */}
+                    <div>
+                      <label className="rm-label">
+                        {formData.entityType === 'فرد'
+                          ? 'الاسم الكامل'
+                          : formData.entityType
+                          ? 'اسم الكيان'
+                          : 'الاسم'}
+                      </label>
+                      <input
+                        ref={firstInputRef}
+                        type="text"
+                        placeholder={
+                          formData.entityType
+                            ? ENTITY_NAME_PLACEHOLDER[formData.entityType]
+                            : 'اختر نوع الكيان أولاً'
+                        }
+                        value={formData.associationName}
+                        onChange={(e) => handleChange('associationName', e.target.value)}
+                        onFocus={() => setFocusedField('name')}
+                        onBlur={() => setFocusedField(null)}
+                        className="rm-input"
+                        autoComplete={formData.entityType === 'فرد' ? 'name' : 'organization'}
+                        maxLength={200}
+                        disabled={!formData.entityType}
+                        style={{ opacity: formData.entityType ? 1 : 0.5 }}
+                      />
+                    </div>
+
+                    {/* Phone */}
+                    <div>
+                      <label className="rm-label">رقم الجوال</label>
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="05xxxxxxxx"
+                        value={formData.phone}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          handleChange('phone', val);
+                        }}
+                        onKeyPress={(e) => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }}
+                        onFocus={() => setFocusedField('phone')}
+                        onBlur={() => setFocusedField(null)}
+                        className="rm-input"
+                        style={{ direction: 'ltr', textAlign: 'right',
                           borderColor: formData.phone.length > 0 && formData.phone.length < 10
                             ? 'rgba(239,68,68,0.5)'
                             : formData.phone.length === 10
                             ? 'rgba(34,197,94,0.5)'
                             : undefined
-                        }}>
-                      <div>
-                        <label className="rm-label">رقم الجوال</label>
-                        <input
+                        }}
+                        maxLength={10}
+                        autoComplete="tel"
+                      />
+                    </div>
+
+                    {/* License */}
+                    {formData.entityType !== 'فرد' && (
+                    <div>
+                      <label className="rm-label">رقم الترخيص</label>
+                      <input
+                        type="text"
                         inputMode="numeric"
                         pattern="[0-9]*"
-                          type="tel"
-                          placeholder="05xxxxxxxx"
-                          value={formData.phone}
-                          onChange={(e) => {
-                        const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                        handleChange('phone', val);
-                      }}
-                      onKeyPress={(e) => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }}
-                          onFocus={() => setFocusedField('phone')}
-                          onBlur={() => setFocusedField(null)}
-                          className="rm-input"
-                          style={{ direction: 'ltr', textAlign: 'right' }}
-                          maxLength={10}
-                          autoComplete="tel"
-                        />
-                      </div>
-                      <div>
-                        <label className="rm-label">رقم الترخيص</label>
-                        <div>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            placeholder="أرقام فقط"
-                            value={formData.license}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                              handleChange('license', val);
-                            }}
-                            onKeyPress={(e) => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }}
-                            onFocus={() => setFocusedField('license')}
-                            onBlur={() => setFocusedField(null)}
-                            className="rm-input"
-                            maxLength={10}
-                          />
-                          <p style={{ fontSize: 11, color: formData.license.length >= 5 ? '#10b981' : '#94a3b8', margin: '3px 0 0', textAlign: 'left' }}>
-                            {formData.license.length}/10
-                          </p>
-                        </div>
-                      </div>
+                        placeholder="أرقام فقط (1-10 أرقام)"
+                        value={formData.license}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          handleChange('license', val);
+                        }}
+                        onKeyPress={(e) => { if (!/[0-9]/.test(e.key)) e.preventDefault(); }}
+                        onFocus={() => setFocusedField('license')}
+                        onBlur={() => setFocusedField(null)}
+                        className="rm-input"
+                        maxLength={10}
+                      />
+                      <p style={{ fontSize: 11, color: formData.license.length >= 1 ? '#10b981' : '#94a3b8', margin: '3px 0 0', textAlign: 'left' }}>
+                        {formData.license.length}/10
+                      </p>
                     </div>
+                    )}
 
                   </div>
 
@@ -1223,7 +1269,6 @@ export function RegisterModal({
       </div>
     </>
   );
-}
+};
 
-// ✅ نضيف import لـ React لأننا نستخدم React.Fragment
-import React from 'react';
+export default RegisterModal;

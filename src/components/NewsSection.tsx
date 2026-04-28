@@ -1,5 +1,28 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback, memo } from 'react';
 import { News } from '../lib/supabase';
+
+// ─── Security helpers ────────────────────────────────────────────────────────
+
+/** منع XSS: قبول روابط HTTP/HTTPS فقط */
+const isValidUrl = (url: unknown): url is string =>
+  typeof url === 'string' && /^https?:\/\//i.test(url.trim());
+
+/** تنظيف النص من رموز HTML الخطرة */
+const sanitize = (str: unknown): string => {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+};
+
+/** التحقق من صحة UUID لمنع حقن المعرفات */
+const isValidId = (id: unknown): id is string =>
+  typeof id === 'string' && /^[a-zA-Z0-9_\-]{1,64}$/.test(id);
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface NewsSectionProps {
   news: News[];
@@ -11,6 +34,169 @@ interface NewsSectionProps {
   isAdmin: boolean;
 }
 
+// ─── Formatters ──────────────────────────────────────────────────────────────
+
+const formatDate = (dateStr: string): string => {
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('ar-SA', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+};
+
+const getInitials = (name: string): string => {
+  if (!name) return '؟';
+  return name.split(' ').slice(0, 2).map((w) => w[0] || '').join('');
+};
+
+// ─── Skeleton ────────────────────────────────────────────────────────────────
+
+const SkeletonCard = () => (
+  <div className="news-card news-card--skeleton" role="status" aria-label="جاري تحميل الخبر">
+    <div className="news-img-wrapper news-img-wrapper--skeleton" />
+    <div className="news-card__body">
+      <div className="skeleton-line skeleton-line--short" />
+      <div className="skeleton-line" />
+      <div className="skeleton-line skeleton-line--medium" />
+      <div className="skeleton-line skeleton-line--short" />
+    </div>
+  </div>
+);
+
+// ─── Single Card ─────────────────────────────────────────────────────────────
+
+interface NewsCardProps {
+  item: News;
+  isAdmin: boolean;
+  onDelete: (id: string) => void;
+  onEdit?: (id: string) => void;
+}
+
+const NewsCard = memo(({ item, isAdmin, onDelete, onEdit }: NewsCardProps) => {
+  const handleDelete = useCallback(() => {
+    if (!isValidId(item.id)) return;
+    if (window.confirm('هل أنت متأكد من حذف هذا الخبر؟')) {
+      onDelete(item.id);
+    }
+  }, [item.id, onDelete]);
+
+  const handleEdit = useCallback(() => {
+    if (!isValidId(item.id)) return;
+    onEdit?.(item.id);
+  }, [item.id, onEdit]);
+
+  const imgSrc = isValidUrl(item.image)
+    ? item.image
+    : '/img/default-news.jpg';
+
+  const tweetLink = isValidUrl(item.tweet) ? item.tweet : null;
+  const linkLabel =
+    tweetLink?.includes('twitter') || tweetLink?.includes('x.com')
+      ? 'عرض التغريدة'
+      : 'المزيد من المعلومات';
+
+  return (
+    <article className="news-card" data-aos="fade-up" aria-label={sanitize(item.title)}>
+      {/* ── الصورة ── */}
+      <div className="news-img-wrapper">
+        <span className="news-category-pill">{sanitize(item.category) || 'عام'}</span>
+        <img
+          src={imgSrc}
+          alt={sanitize(item.title) || 'خبر'}
+          className="news-img"
+          loading="lazy"
+          decoding="async"
+          onError={(e) => {
+            const target = e.currentTarget;
+            target.onerror = null; // منع حلقة لا نهائية
+            target.src = '/img/default-news.jpg';
+          }}
+        />
+        <span className="news-date-badge">
+          {formatDate(item.date || item.created_at)}
+        </span>
+      </div>
+
+      {/* ── المحتوى ── */}
+      <div className="news-card__body">
+        {item.author && (
+          <div className="news-author-chip">
+            <span className="news-author-avatar" aria-hidden="true">
+              {getInitials(item.author)}
+            </span>
+            <span>{sanitize(item.author)}</span>
+          </div>
+        )}
+
+        <h3 className="news-card__title">{sanitize(item.title) || 'عنوان الخبر'}</h3>
+
+        {item.excerpt && (
+          <p className="news-card__excerpt">{sanitize(item.excerpt)}</p>
+        )}
+
+        <div className="news-card__footer">
+          {tweetLink ? (
+            <a
+              href={tweetLink}
+              className="news-read-more"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${linkLabel}: ${sanitize(item.title)}`}
+            >
+              {linkLabel}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </a>
+          ) : (
+            <span />
+          )}
+
+          {isAdmin && (
+            <div className="news-admin-actions">
+              {onEdit && (
+                <button
+                  className="news-icon-btn news-icon-btn--edit"
+                  onClick={handleEdit}
+                  aria-label={`تعديل: ${sanitize(item.title)}`}
+                  title="تعديل الخبر"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                </button>
+              )}
+              <button
+                className="news-icon-btn news-icon-btn--delete"
+                onClick={handleDelete}
+                aria-label={`حذف: ${sanitize(item.title)}`}
+                title="حذف الخبر"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6" /><path d="M14 11v6" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+});
+
+NewsCard.displayName = 'NewsCard';
+
+// ─── Main Component ──────────────────────────────────────────────────────────
+
 export function NewsSection({
   news,
   loading,
@@ -20,156 +206,78 @@ export function NewsSection({
   onEditNews,
   isAdmin,
 }: NewsSectionProps) {
-  const loadMoreBtnRef = useRef<HTMLButtonElement>(null);
+  const loadMoreRef = useRef<HTMLButtonElement>(null);
 
+  // إخفاء/إظهار زر التحميل
   useEffect(() => {
-    if (loadMoreBtnRef.current) {
-      if (hasMore && !loading) {
-        loadMoreBtnRef.current.style.display = 'flex';
-      } else {
-        loadMoreBtnRef.current.style.display = 'none';
-      }
+    if (loadMoreRef.current) {
+      loadMoreRef.current.style.display =
+        hasMore && !loading ? 'inline-flex' : 'none';
     }
   }, [hasMore, loading]);
 
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('ar-SA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  };
-
-  const formatTimestamp = (timestamp: number | null | undefined) => {
-    if (!timestamp) return null;
-    const date = new Date(timestamp * 1000);
-    return date.toLocaleString('ar-SA');
-  };
-
-  const isValidUrl = (url: string) => /^https?:\/\//i.test(url);
-
   return (
-    <section className="news-section" id="news" aria-labelledby="newsSectionTitle">
+    <section
+      className="news-section"
+      id="news"
+      aria-labelledby="newsSectionTitle"
+    >
       <div className="news-container">
+        {/* ── Header ── */}
         <div className="section-header" data-aos="fade-up">
-          <h2 id="newsSectionTitle">آخر الأخبار والإعلانات</h2>
+          <h2 id="newsSectionTitle" className="section-title">آخر الأخبار والإعلانات</h2>
           <p>تابع أحدث إنجازاتنا ومستجداتنا لحظة بلحظة</p>
         </div>
 
-        <div className="news-grid" id="newsGrid" aria-label="قائمة الأخبار">
+        {/* ── Grid ── */}
+        <div
+          className="news-grid"
+          role="list"
+          aria-label="قائمة الأخبار"
+          aria-busy={loading}
+        >
           {loading && news.length === 0 ? (
             <>
-              <div className="skeleton" style={{ height: '450px', borderRadius: '20px' }} role="status" aria-label="جاري تحميل الأخبار" />
-              <div className="skeleton" style={{ height: '450px', borderRadius: '20px' }} role="status" aria-label="جاري تحميل الأخبار" />
-              <div className="skeleton" style={{ height: '450px', borderRadius: '20px' }} role="status" aria-label="جاري تحميل الأخبار" />
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
             </>
           ) : news.length === 0 ? (
-            <p style={{ textAlign: 'center', color: '#475569', gridColumn: '1 / -1' }}>
+            <p className="news-empty" role="status">
               لا توجد أخبار منشورة حالياً.
             </p>
           ) : (
             news.map((item) => (
-              <article key={item.id} className="news-card" role="listitem" data-aos="fade-up">
-                <div className="news-image-container">
-                  <span className="news-date-badge">
-                    {formatDate(item.date || item.created_at)}
-                  </span>
-                  <img
-                    src={isValidUrl(item.image) ? item.image : 'img/default-news.jpg'}
-                    alt={item.title || 'خبر'}
-                    className="news-image"
-                    loading="lazy"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src =
-                        'https://via.placeholder.com/500x300/0891b2/ffffff?text=News';
-                    }}
-                  />
-                </div>
-                <div className="news-content">
-                  <div className="news-meta">
-                    <span className="news-category">{item.category || 'عام'}</span>
-                    {item.author && (
-                      <span className="news-author">
-                        <i className="fas fa-user-edit"></i>
-                        {item.author}
-                      </span>
-                    )}
-                  </div>
-                  <h3 className="news-title">{item.title || 'عنوان الخبر'}</h3>
-                  <p className="news-excerpt">{item.excerpt || ''}</p>
-
-                  {/* معلومات إضافية */}
-                  <div className="news-extra-info">
-                    {item.city_info && (
-                      <span className="news-info-item" title="المدينة">
-                        <i className="fas fa-map-marker-alt"></i>
-                        {item.city_info}
-                      </span>
-                    )}
-                    {item.device_info && (
-                      <span className="news-info-item" title="الجهاز">
-                        <i className="fas fa-mobile-alt"></i>
-                        {item.device_info}
-                      </span>
-                    )}
-                    {item.timestamp && (
-                      <span className="news-info-item" title="الوقت">
-                        <i className="fas fa-clock"></i>
-                        {formatTimestamp(item.timestamp)}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="news-footer">
-                    <a
-                      href={isValidUrl(item.tweet || '') ? item.tweet : '#'}
-                      className="read-more"
-                      target={isValidUrl(item.tweet || '') ? '_blank' : undefined}
-                      rel="noopener noreferrer"
-                    >
-                      اقرأ المزيد <i className="fas fa-arrow-left"></i>
-                    </a>
-                    {isAdmin && (
-                      <div className="admin-actions">
-                        {onEditNews && (
-                          <button
-                            className="news-action-btn admin-edit"
-                            onClick={() => onEditNews(item.id)}
-                            title="تعديل الخبر"
-                            aria-label="تعديل الخبر"
-                          >
-                            <i className="fas fa-edit"></i>
-                          </button>
-                        )}
-                        <button
-                          className="news-action-btn admin-delete"
-                          onClick={() => onDeleteNews(item.id)}
-                          title="حذف الخبر"
-                          aria-label="حذف الخبر"
-                        >
-                          <i className="fas fa-trash"></i>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </article>
+              <NewsCard
+                key={item.id}
+                item={item}
+                isAdmin={isAdmin}
+                onDelete={onDeleteNews}
+                onEdit={onEditNews}
+              />
             ))
           )}
         </div>
 
-        <div className="load-more-container">
+        {/* ── Load More ── */}
+        <div className="news-load-more-wrap">
           <button
-            ref={loadMoreBtnRef}
-            className="btn-load-more"
+            ref={loadMoreRef}
+            className="news-load-more-btn"
             onClick={onLoadMore}
             disabled={loading}
             aria-label="عرض المزيد من الأخبار"
+            style={{ display: 'none' }}
           >
-            <i className="fas fa-spinner fa-spin" style={{ display: loading ? 'inline' : 'none' }}></i>
+            {loading && (
+              <svg className="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            )}
             <span>عرض المزيد من الأخبار</span>
-            <i className="fas fa-chevron-down"></i>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 // pages/ReviewsPage.tsx
 import { useState, useEffect } from 'react';
+import { useDarkMode } from '../hooks/useDarkMode';
 import { useNavigate } from 'react-router-dom';
 import { 
   supabase, 
@@ -12,9 +13,42 @@ import {
 } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import { BackgroundAnimation } from '../components/BackgroundAnimation';
 import { AdminReviewQueue } from '../components/AdminReviewQueue';
-import { Header } from '../components/Header';
+import {
+  notifyAdminNewReview,
+  notifyItemApproved,
+  notifyItemRejected,
+} from '../lib/notificationHelpers';
+
+/* ── Security Helpers ── */
+const sanitizeInput = (input: string): string => {
+  if (!input || typeof input !== 'string') return '';
+  const escapeMap: Record<string, string> = {
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#x27;',
+    '`': '&#x60;',
+  };
+  return input
+    .replace(/[<>"'`]/g, c => escapeMap[c] || c)
+    .replace(/javascript\s*:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .trim()
+    .slice(0, 2000);
+};
+const createRateLimiter = (max: number, windowMs: number, label = '') => {
+  const reqs: number[] = []; let blocked = 0;
+  return { canProceed: (): boolean => {
+    const now = Date.now();
+    if (now < blocked) return false;
+    while (reqs.length && reqs[0] < now - windowMs) reqs.shift();
+    if (reqs.length >= max) { blocked = now + Math.min(windowMs * 2, 300000); if(label) console.warn('[RateLimit]', label); return false; }
+    reqs.push(now); return true;
+  }};
+};
+const submitRateLimiter = createRateLimiter(3, 120000, 'review-submit');
 
 interface Review {
   id: string;
@@ -33,23 +67,25 @@ export default function ReviewsPage() {
   const navigate = useNavigate();
   const { user, isAdmin, isEmployee } = useAuth();
   const { showToast } = useToast();
-const [isDarkMode, setIsDarkMode] = useState(
-  document.documentElement.classList.contains('dark')
-);
 
-useEffect(() => {
-  const observer = new MutationObserver(() => {
-    setIsDarkMode(document.documentElement.classList.contains('dark'));
-  });
-  observer.observe(document.documentElement, { attributeFilter: ['class'] });
-  return () => observer.disconnect();
-}, []);
+
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showAdminQueue, setShowAdminQueue] = useState(false);
+
+  useEffect(() => {
+    const anyOpen = showForm || showAdminQueue;
+    if (anyOpen) {
+      document.documentElement.style.setProperty('--scrollbar-w', `${window.innerWidth - document.documentElement.clientWidth}px`);
+      document.body.classList.add('modal-open');
+    } else {
+      document.body.classList.remove('modal-open');
+    }
+    return () => { document.body.classList.remove('modal-open'); };
+  }, [showForm, showAdminQueue]);
   
   const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
@@ -58,6 +94,7 @@ useEffect(() => {
 
   const [currentUserAssociation, setCurrentUserAssociation] = useState<string>('');
   const isStaff = isAdmin || isEmployee;
+  const { isDarkMode, toggleDarkMode } = useDarkMode();
   const dm = isDarkMode;
 
   // جلب اسم الجمعية للمستخدم الحالي
@@ -126,19 +163,46 @@ useEffect(() => {
       return; 
     }
 
+    if (!submitRateLimiter.canProceed()) {
+      showToast('يرجى الانتظار قبل إرسال تقييم آخر', 'error'); return;
+    }
+
+    // ── تنظيف النص
+    const cleanText = sanitizeInput(reviewText.trim());
+    if (cleanText.length > 0 && cleanText.length < 5) { showToast('التقييم قصير جداً', 'error'); return; }
+
     setIsSubmitting(true);
 
     try {
+      // ── منع التكرار: تحقق من وجود تقييم سابق غير ملغى
+      const { data: existingReview } = await supabase
+        .from('reviews')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (existingReview) {
+        showToast('⚠️ لديك تقييم مسبق — يمكنك تعديله أو حذفه أولاً', 'error');
+        setIsSubmitting(false); return;
+      }
+       let associationName = currentUserAssociation;
+  if (!associationName) {
+    const { data: profile } = await supabase
+      .from('user')
+      .select('association_name')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    associationName = profile?.association_name || undefined;
+  }
+
       let mediaUrl = null;
       let mediaType = null;
 
       // 5. إرسال البيانات لقاعدة البيانات
-      // تأكدنا هنا من إرسال user_id بشكل صريح
       const reviewData = {
         user_id: user.id,
-        user_name: currentUserAssociation || undefined,
+        user_name: associationName,
         rating: rating,
-        review_text: reviewText.trim(),
+        review_text: cleanText,
         media_url: mediaUrl,
         media_type: mediaType,
         is_active: false // نجعلها false للمراجعة كما في الـ Policy
@@ -153,6 +217,17 @@ useEffect(() => {
         }
         throw error;
       }
+
+      // إشعار الأدمن بالرأي الجديد
+      const { data: insertedReview } = await supabase
+        .from('reviews').select('id').eq('user_id', user.id)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const clientName = currentUserAssociation || user.email || 'عميل';
+      await notifyAdminNewReview({
+        clientName,
+        reviewId: insertedReview?.id || '',
+        rating,
+      });
 
       // 6. نجاح العملية
       showToast('تم إرسال رأيك بنجاح وهو قيد المراجعة! 🎉', 'success');
@@ -190,6 +265,27 @@ useEffect(() => {
       if (error) throw error;
       showToast(currentStatus ? 'تم إخفاء الرأي' : 'تم إظهار الرأي', 'success');
       loadReviews();
+
+      // إشعار العميل عند الاعتماد أو الإخفاء
+      const { data: review } = await supabase
+        .from('reviews').select('user_id, review_text').eq('id', id).maybeSingle();
+      if (review?.user_id) {
+        if (!currentStatus) {
+          await notifyItemApproved({
+            clientUserId: review.user_id,
+            itemType:     'review',
+            itemName:     (review.review_text || 'رأيك').slice(0, 40),
+            itemId:       id,
+          });
+        } else {
+          await notifyItemRejected({
+            clientUserId: review.user_id,
+            itemType:     'review',
+            itemName:     (review.review_text || 'رأيك').slice(0, 40),
+            itemId:       id,
+          });
+        }
+      }
     } catch (err) {
       showToast('حدث خطأ', 'error');
     }
@@ -211,17 +307,38 @@ useEffect(() => {
     : '0';
 
   return (
-    <div style={{ minHeight: '100vh', fontFamily: "'Tajawal', sans-serif", direction: 'rtl' }}>
+    <div style={{ minHeight: '100dvh', fontFamily: "'Tajawal', sans-serif", direction: 'rtl', overflowX: 'hidden' }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
+        .futuristic-header,
+          .mobile-drawer,
+          .modal-box {
+            will-change: transform, opacity;
+          }
+
+          @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+              animation-duration: 0.01ms !important;
+              animation-iteration-count: 1 !important;
+              transition-duration: 0.01ms !important;
+            }
+          }
+
+          @media (max-width: 768px) {
+            .futuristic-header {
+              contain: layout style paint;
+            }
+            
+            .mobile-drawer {
+              contain: layout style paint;
+            }
+          }
 
         /* ===== PAGE ENTRANCE ===== */
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(24px); }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
           to   { opacity: 1; transform: translateY(0); }
         }
-        @keyframes scaleIn {
-          from { opacity: 0; transform: scale(0.92); }
+        @keyframes scaleIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
           to   { opacity: 1; transform: scale(1); }
         }
         @keyframes featherFloat {
@@ -229,12 +346,10 @@ useEffect(() => {
           50%       { transform: translateY(-10px) rotate(8deg); }
         }
         @keyframes spin { to { transform: rotate(360deg) } }
-        @keyframes shimmer {
-          0%   { background-position: -200% 0; }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
           100% { background-position: 200% 0; }
         }
-        @keyframes cardIn {
-          from { opacity: 0; transform: translateY(16px) scale(0.98); }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
           to   { opacity: 1; transform: translateY(0)  scale(1); }
         }
         @keyframes pulse-ring {
@@ -249,81 +364,80 @@ useEffect(() => {
 
         /* ===== HERO SECTION ===== */
         .reviews-hero {
-          padding: 100px 24px 48px;
-          text-align: center;
+          padding: 100px 24px 40px;
           position: relative;
           z-index: 10;
           animation: fadeUp 0.7s ease both;
         }
 
-        .hero-feather-wrap {
-          position: relative;
-          display: inline-block;
-          margin-bottom: 24px;
+        .reviews-hero-inner {
+          max-width: 1200px;
+          margin: 0 auto;
+          display: flex;
+          align-items: center;
+          gap: 32px;
+          flex-wrap: wrap;
+        }
+
+        .reviews-hero-text {
+          flex: 1;
+          min-width: 240px;
         }
 
         .hero-feather-icon {
-          width: 80px; height: 80px;
-          border-radius: 24px;
+          width: 72px; height: 72px;
+          border-radius: 22px;
           background: ${dm ? 'linear-gradient(135deg,#1e3a5f,#0891b2)' : 'linear-gradient(135deg,#e0f2fe,#bae6fd)'};
           display: flex; align-items: center; justify-content: center;
-          font-size: 36px;
+          font-size: 32px;
           box-shadow: ${dm ? '0 8px 32px rgba(8,145,178,0.4)' : '0 8px 32px rgba(8,145,178,0.2)'};
-          position: relative;
-          animation: featherFloat 4s ease-in-out infinite;
-        }
-
-        .hero-feather-ring {
-          position: absolute;
-          inset: -8px;
-          border-radius: 32px;
-          border: 2px solid rgba(8,145,178,0.3);
-          animation: pulse-ring 2s ease-out infinite;
+          margin-bottom: 16px;
+          animation: featherFloat 3s ease-in-out infinite;
         }
 
         .hero-title {
-          font-size: clamp(28px, 5vw, 42px);
+          font-size: clamp(22px, 4vw, 36px);
           font-weight: 900;
-          margin: 0 0 12px;
+          margin: 0 0 8px;
           color: ${dm ? '#f1f5f9' : '#0f172a'};
           line-height: 1.2;
         }
 
         .hero-subtitle {
-          font-size: 16px;
-          color: ${dm ? '#94a3b8' : '#64748b'};
-          margin: 0 0 32px;
-        }
-
-        /* ===== STATS ROW ===== */
-        .stats-row {
-          display: flex;
-          gap: 12px;
-          justify-content: center;
-          flex-wrap: wrap;
-          margin-bottom: 0;
-        }
-
-        .stat-pill {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 10px 20px;
-          border-radius: 50px;
           font-size: 14px;
-          font-weight: 700;
-          backdrop-filter: blur(12px);
+          color: ${dm ? '#94a3b8' : '#64748b'};
+          margin: 0;
+          line-height: 1.6;
+        }
+
+        /* ===== TOTAL BADGE (يسار) ===== */
+        .reviews-total-badge {
+          padding: 14px 24px;
+          border-radius: 18px;
+          background: ${dm ? 'rgba(8,145,178,0.1)' : 'rgba(255,255,255,0.85)'};
           border: 1px solid ${dm ? 'rgba(8,145,178,0.3)' : 'rgba(8,145,178,0.2)'};
-          background: ${dm ? 'rgba(8,145,178,0.1)' : 'rgba(255,255,255,0.8)'};
-          color: ${dm ? '#67e8f9' : '#0c4a6e'};
+          text-align: center;
+          backdrop-filter: blur(12px);
+          flex-shrink: 0;
           animation: scaleIn 0.5s ease both;
         }
 
-        .stat-pill .stat-num {
-          font-size: 18px;
+        .reviews-total-num {
+          font-size: 36px;
           font-weight: 900;
           color: #0891b2;
+          line-height: 1;
         }
+
+        .reviews-total-lbl {
+          font-size: 12px;
+          font-weight: 700;
+          color: ${dm ? '#94a3b8' : '#64748b'};
+          margin-top: 4px;
+        }
+
+        /* ── modal-open scroll lock ── */
+        body.modal-open { overflow: hidden !important; }
 
         /* ===== FORM MODAL ===== */
         .form-overlay {
@@ -333,7 +447,7 @@ useEffect(() => {
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 16px;
+          padding: env(safe-area-inset-top,16px) 16px env(safe-area-inset-bottom,16px);
         }
 
         .form-backdrop {
@@ -347,7 +461,7 @@ useEffect(() => {
           position: relative;
           width: 100%;
           max-width: 540px;
-          max-height: 90vh;
+          max-height: min(90vh, calc(100dvh - 32px));
           overflow-y: auto;
           border-radius: 24px;
           padding: 28px;
@@ -678,46 +792,27 @@ useEffect(() => {
         /* ===== RESPONSIVE ===== */
         @media (max-width: 600px) {
           .reviews-grid { grid-template-columns: 1fr; }
-          .stats-row { gap: 8px; }
+          .reviews-total-badge { display: none; }
+          .reviews-hero { padding: 85px 16px 32px; }
           .fab { bottom: 20px; left: 20px; }
         }
       `}</style>
 
-      <BackgroundAnimation isDarkMode={dm} />
       
-      <Header
-        onLoginClick={() => navigate('/')}
-        onRegisterClick={() => navigate('/')}
-        onSignOut={() => {}}
-        isAdmin={isAdmin}
-        isEmployee={isEmployee}
-        user={user}
-        isDarkMode={dm}
-        onToggleDarkMode={() => setIsDarkMode(!dm)}
-      />
 
       {/* Hero */}
       <div className="reviews-hero">
-        <div className="hero-feather-wrap">
-          <div className="hero-feather-icon">
-            <i className="fas fa-feather" style={{ color: '#0891b2' }} />
+        <div className="reviews-hero-inner">
+          <div className="reviews-hero-text">
+            <div className="hero-feather-icon">
+              <i className="fas fa-feather" style={{ color: '#0891b2' }} />
+            </div>
+            <h1 className="hero-title">آراء عملائنا</h1>
+            <p className="hero-subtitle">شاهد ما يقوله عملاؤنا عن خدماتنا</p>
           </div>
-          <div className="hero-feather-ring" />
-        </div>
-
-        <h1 className="hero-title">آراء عملائنا</h1>
-        <p className="hero-subtitle">شاهد ما يقوله عملاؤنا عن خدماتنا</p>
-
-        <div className="stats-row">
-          <div className="stat-pill" style={{ animationDelay: '0.1s' }}>
-            <i className="fas fa-feather" style={{ color: '#0891b2' }} />
-            <span>إجمالي الآراء</span>
-            <span className="stat-num">{reviews.length}</span>
-          </div>
-          <div className="stat-pill" style={{ animationDelay: '0.2s' }}>
-            <span style={{ color: '#fbbf24' }}>★</span>
-            <span>متوسط التقييم</span>
-            <span className="stat-num">{avgRating}</span>
+          <div className="reviews-total-badge">
+            <div className="reviews-total-num">{reviews.length}</div>
+            <div className="reviews-total-lbl">إجمالي الآراء</div>
           </div>
         </div>
       </div>

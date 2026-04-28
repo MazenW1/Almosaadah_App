@@ -1,5 +1,24 @@
-// pages/ProjectsPage.tsx
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useDarkMode } from '../hooks/useDarkMode';
+import { useAuth } from '../hooks/useAuth';
+import { useToast } from '../hooks/useToast';
+import { 
+  supabase, 
+  fetchProjects, 
+  createProject, 
+  deleteProject, 
+  uploadProjectFile 
+} from '../lib/supabase';
+import {
+  notifyAdminNewProject,
+  notifyItemApproved,
+} from '../lib/notificationHelpers';
+import { BackgroundAnimation } from '../components/BackgroundAnimation';
+import { Header } from '../components/Header';
+import { AdminReviewQueue } from '../components/AdminReviewQueue';
+
+/* ── Utility Helpers ── */
 const formatBudget = (value: string): string => {
   const digits = value.replace(/[^\d]/g, '');
   if (!digits) return '';
@@ -9,19 +28,53 @@ const formatBudget = (value: string): string => {
 const parseBudget = (value: string): string => {
   return value.replace(/[^\d]/g, '');
 };
-import { useNavigate } from 'react-router-dom';
-import { 
-  supabase, 
-  fetchProjects, 
-  createProject, 
-  deleteProject, 
-  uploadProjectFile 
-} from '../lib/supabase';
-import { useAuth } from '../hooks/useAuth';
-import { useToast } from '../hooks/useToast';
-import { BackgroundAnimation } from '../components/BackgroundAnimation';
-import { Header } from '../components/Header';
-import { AdminReviewQueue } from '../components/AdminReviewQueue';
+
+/* ── Security Helpers ── */
+const sanitizeInput = (input: string): string => {
+  if (!input || typeof input !== 'string') return '';
+  
+  const map: Record<string, string> = {
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#x27;',
+    '`': '&#x60;'
+  };
+
+  return input
+    .replace(/[<>"'`]/g, (c) => map[c] || c)
+    .replace(/javascript\s*:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .trim()
+    .slice(0, 2000);
+};
+
+const createRateLimiter = (max: number, windowMs: number, label = '') => {
+  const reqs: number[] = []; 
+  let blocked = 0;
+  
+  return { 
+    canProceed: (): boolean => {
+      const now = Date.now();
+      if (now < blocked) return false;
+      while (reqs.length && reqs[0] < now - windowMs) reqs.shift();
+      if (reqs.length >= max) { 
+        blocked = now + Math.min(windowMs * 2, 300000); 
+        if(label) console.warn('[RateLimit]', label); 
+        return false; 
+      }
+      reqs.push(now); 
+      return true;
+    }
+  };
+};
+
+// هنا تكملة الـ Component الخاص بك (ProjectsPage)
+// تأكد أنك لا تضع أي كود يبدأ بـ @media هنا
+
+const submitRateLimiter = createRateLimiter(3, 120000, 'project-submit');
+const apiRateLimiter    = createRateLimiter(15, 60000, 'project-api');
  
 const SAUDI_CITIES = [
   'الرياض','جدة','مكة المكرمة','المدينة المنورة','الدمام','الخبر','الظهران','الطائف','تبوك',
@@ -65,17 +118,7 @@ export default function ProjectsPage() {
   const navigate = useNavigate();
   const { user, isAdmin, isEmployee, isClient, profileLoading } = useAuth();
   const { showToast } = useToast();
-const [isDarkMode, setIsDarkMode] = useState(
-  document.documentElement.classList.contains('dark')
-);
-
-useEffect(() => {
-  const observer = new MutationObserver(() => {
-    setIsDarkMode(document.documentElement.classList.contains('dark'));
-  });
-  observer.observe(document.documentElement, { attributeFilter: ['class'] });
-  return () => observer.disconnect();
-}, []);
+  const { isDarkMode, toggleDarkMode } = useDarkMode();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -86,6 +129,17 @@ useEffect(() => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdminQueue, setShowAdminQueue] = useState(false);
   const [approveModal, setApproveModal] = useState<{ open: boolean; projectId: string; projectName: string }>({ open: false, projectId: '', projectName: '' });
+
+  useEffect(() => {
+    const anyOpen = showForm || showAdminQueue || approveModal.open;
+    if (anyOpen) {
+      document.documentElement.style.setProperty('--scrollbar-w', `${window.innerWidth - document.documentElement.clientWidth}px`);
+      document.body.classList.add('modal-open');
+    } else {
+      document.body.classList.remove('modal-open');
+    }
+    return () => { document.body.classList.remove('modal-open'); };
+  }, [showForm, showAdminQueue, approveModal.open]);
   const [accreditationBody, setAccreditationBody] = useState('');
   const [isApproving, setIsApproving] = useState(false);
   const [currentUserAssociation, setCurrentUserAssociation] = useState<string>('');
@@ -98,6 +152,15 @@ useEffect(() => {
  
   const isStaff = isAdmin || isEmployee;
   const dm = isDarkMode;
+
+  // مزامنة class dark على html حتى تعمل CSS variables بشكل صحيح
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
 
   // جلب اسم الجمعية للمستخدم الحالي
   useEffect(() => {
@@ -142,8 +205,29 @@ const handleSubmit = async (e?: React.FormEvent) => {
     if (!formData.project_name.trim()) { showToast('يرجى إدخال اسم المشروع', 'error'); return; }
     if (!projectFile) { showToast('يرجى إرفاق ملف المشروع أولاً', 'error'); return; }
 
+    if (!submitRateLimiter.canProceed()) {
+      showToast('يرجى الانتظار قبل إرسال مشروع آخر', 'error'); return;
+    }
+
+    // ── تنظيف المدخلات
+    const cleanName = sanitizeInput(formData.project_name.trim());
+    if (!cleanName) { showToast('اسم المشروع غير صالح', 'error'); return; }
+
     setIsSubmitting(true);
     try {
+      // ── منع التكرار: تحقق من مشروع نشط بنفس الاسم
+      const { data: existingProject } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('project_name', cleanName)
+        .not('status', 'in', '("rejected")')
+        .maybeSingle();
+      if (existingProject) {
+        showToast('⚠️ لديك مشروع بنفس الاسم قيد المراجعة أو مقبول بالفعل', 'error');
+        setIsSubmitting(false); return;
+      }
+
       // 1. رفع الملف أولاً
       const uploaded = await uploadProjectFile(projectFile, user.id);
       
@@ -173,6 +257,23 @@ const handleSubmit = async (e?: React.FormEvent) => {
       setProjectFile(null);
       setFormData({ project_name: '', duration: '', budget: '', target_area: '', project_type: '' });
       loadProjects();
+
+      // إشعار الأدمن — منفصل لو فشل ما يأثر
+      try {
+        const { data: insertedProject } = await supabase
+          .from('projects').select('id').eq('user_id', user.id).eq('project_name', formData.project_name)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const { data: profile } = await supabase
+          .from('user').select('association_name').eq('user_id', user.id).maybeSingle();
+        const clientName = (profile as any)?.association_name || user.email || 'عميل';
+        await notifyAdminNewProject({
+          clientName,
+          projectName: formData.project_name,
+          projectId:   insertedProject?.id || '',
+        });
+      } catch (notifErr) {
+        console.warn('Notification failed:', notifErr);
+      }
 
     } catch (err: any) {
       console.error("SQL/DB Error:", err);
@@ -204,6 +305,19 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .eq('id', approveModal.projectId);
       if (error) throw error;
       showToast('تم اعتماد المشروع بنجاح ✅', 'success');
+
+      // إشعار العميل باعتماد مشروعه
+      const { data: project } = await supabase
+        .from('projects').select('user_id').eq('id', approveModal.projectId).maybeSingle();
+      if (project?.user_id) {
+        await notifyItemApproved({
+          clientUserId: project.user_id,
+          itemType:     'project',
+          itemName:     approveModal.projectName,
+          itemId:       approveModal.projectId,
+        });
+      }
+
       setApproveModal({ open: false, projectId: '', projectName: '' });
       setAccreditationBody('');
       loadProjects();
@@ -241,19 +355,104 @@ const handleSubmit = async (e?: React.FormEvent) => {
   }, {} as Record<string, number>);
  
   return (
-    <div style={{ minHeight: '100vh', fontFamily: "'Tajawal', sans-serif", direction: 'rtl' }}>
+    <div style={{ minHeight: '100dvh', fontFamily: "'Tajawal', sans-serif", direction: 'rtl', overflowX: 'hidden' }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
  
-        @keyframes fadeUp   { from { opacity:0; transform:translateY(24px) } to { opacity:1; transform:translateY(0) } }
-        @keyframes scaleIn  { from { opacity:0; transform:scale(0.92)      } to { opacity:1; transform:scale(1)     } }
-        @keyframes cardIn   { from { opacity:0; transform:translateY(16px) scale(0.98) } to { opacity:1; transform:translateY(0) scale(1) } }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } } to { opacity:1; transform:translateY(0) } }
+        @keyframes scaleIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } } to { opacity:1; transform:scale(1)     } }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } } to { opacity:1; transform:translateY(0) scale(1) } }
         @keyframes spin     { to { transform: rotate(360deg) } }
-        @keyframes shimmer  { 0%{ background-position:-200% 0 } 100%{ background-position:200% 0 } }
-        @keyframes accred-shine { 0%{ left:-100% } 60%{ left:150% } 100%{ left:150% } }
-        @keyframes iconBounce { 0%,100%{ transform:translateY(0) scale(1) } 50%{ transform:translateY(-8px) scale(1.1) } }
-        @keyframes pulse-dot  { 0%,100%{ opacity:1 } 50%{ opacity:0.4 } }
- 
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } } 100%{ background-position:200% 0 } }
+        @keyframes accred-shine { 0% { opacity: 0; } 40% { opacity: 1; } 100% { opacity: 0; } } 60%{ left:150% } 100%{ left:150% } }
+        @keyframes iconBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } } 50%{ transform:translateY(-8px) scale(1.1) } }
+        @keyframes pulse-dot { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } } 50%{ opacity:0.4 } }
+
+        /* ── CSS Variables for dark mode (light defaults) ── */
+        :root {
+          --pg-text-primary: #0f172a;
+          --pg-text-secondary: #64748b;
+          --pg-text-muted: #94a3b8;
+          --pg-text-faint: #94a3b8;
+          --pg-bg-card: rgba(255,255,255,0.92);
+          --pg-bg-input: rgba(255,255,255,0.9);
+          --pg-bg-input-solid: #f8fafc;
+          --pg-bg-item: #f8fafc;
+          --pg-bg-overlay: rgba(255,255,255,0.99);
+          --pg-bg-filter-btn: rgba(255,255,255,0.85);
+          --pg-bg-type-btn: #f8fafc;
+          --pg-bg-skeleton-1: #f1f5f9;
+          --pg-bg-skeleton-2: #e2e8f0;
+          --pg-border: #e2e8f0;
+          --pg-border-card: #e2e8f0;
+          --pg-border-muted: rgba(241,245,249,0.6);
+          --pg-hero-icon-bg: linear-gradient(135deg,#e0f2fe,#bae6fd);
+          --pg-hero-icon-shadow: 0 8px 32px rgba(8,145,178,0.2);
+          --pg-upload-zone-color: #94a3b8;
+          --pg-modal-close-bg: #f1f5f9;
+          --pg-modal-close-color: #64748b;
+          --pg-search-icon-color: #94a3b8;
+          --pg-filter-btn-color: #475569;
+          --pg-total-label-color: #94a3b8;
+          --pg-accred-input-bg: #f8fafc;
+          --pg-file-link-bg: rgba(8,145,178,0.08);
+          --pg-own-border: rgba(8,145,178,0.35);
+          --pg-own-shadow: 0 0 0 1px rgba(8,145,178,0.1), 0 4px 20px rgba(8,145,178,0.08);
+        }
+        html.dark {
+          --pg-text-primary: #f1f5f9;
+          --pg-text-secondary: #94a3b8;
+          --pg-text-muted: #64748b;
+          --pg-text-faint: #475569;
+          --pg-bg-card: rgba(30,41,59,0.88);
+          --pg-bg-input: rgba(30,41,59,0.9);
+          --pg-bg-input-solid: rgba(51,65,85,0.5);
+          --pg-bg-item: rgba(51,65,85,0.4);
+          --pg-bg-overlay: rgba(13,20,33,0.98);
+          --pg-bg-filter-btn: rgba(30,41,59,0.8);
+          --pg-bg-type-btn: rgba(30,41,59,0.7);
+          --pg-bg-skeleton-1: #1e293b;
+          --pg-bg-skeleton-2: #334155;
+          --pg-border: #334155;
+          --pg-border-card: rgba(51,65,85,0.7);
+          --pg-border-muted: rgba(51,65,85,0.5);
+          --pg-hero-icon-bg: linear-gradient(135deg,#1e3a5f,#0891b2);
+          --pg-hero-icon-shadow: 0 8px 32px rgba(8,145,178,0.4);
+          --pg-upload-zone-color: #64748b;
+          --pg-modal-close-bg: #334155;
+          --pg-modal-close-color: #94a3b8;
+          --pg-search-icon-color: #475569;
+          --pg-filter-btn-color: #94a3b8;
+          --pg-total-label-color: #64748b;
+          --pg-accred-input-bg: rgba(30,41,59,0.9);
+          --pg-file-link-bg: rgba(8,145,178,0.1);
+          --pg-own-border: rgba(8,145,178,0.5);
+          --pg-own-shadow: 0 0 0 1px rgba(8,145,178,0.15), 0 4px 20px rgba(8,145,178,0.12);
+        }
+
+        .futuristic-header,
+          .mobile-drawer,
+          .modal-box {
+            will-change: transform, opacity;
+          }
+
+          @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+              animation-duration: 0.01ms !important;
+              animation-iteration-count: 1 !important;
+              transition-duration: 0.01ms !important;
+            }
+          }
+
+          @media (max-width: 768px) {
+            .futuristic-header {
+              contain: layout style paint;
+            }
+            
+            .mobile-drawer {
+              contain: layout style paint;
+            }
+          }
         /* ===== HERO ===== */
         .proj-hero {
           padding: 100px 24px 40px;
@@ -276,10 +475,10 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .proj-hero-icon {
           width: 72px; height: 72px;
           border-radius: 22px;
-          background: ${dm ? 'linear-gradient(135deg,#1e3a5f,#0891b2)' : 'linear-gradient(135deg,#e0f2fe,#bae6fd)'};
+          background: var(--pg-hero-icon-bg);
           display: flex; align-items: center; justify-content: center;
           font-size: 32px;
-          box-shadow: ${dm ? '0 8px 32px rgba(8,145,178,0.4)' : '0 8px 32px rgba(8,145,178,0.2)'};
+          box-shadow: var(--pg-hero-icon-shadow);
           margin-bottom: 16px;
           animation: iconBounce 3s ease-in-out infinite;
         }
@@ -287,13 +486,13 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .proj-hero-title {
           font-size: clamp(26px, 4vw, 40px);
           font-weight: 900;
-          color: ${dm ? '#f1f5f9' : '#0f172a'};
+          color: var(--pg-text-primary);
           margin: 0 0 8px;
         }
  
         .proj-hero-sub {
           font-size: 15px;
-          color: ${dm ? '#94a3b8' : '#64748b'};
+          color: var(--pg-text-secondary);
           margin: 0;
         }
  
@@ -301,11 +500,15 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .total-badge {
           padding: 14px 24px;
           border-radius: 18px;
-          background: ${dm ? 'rgba(8,145,178,0.12)' : 'rgba(8,145,178,0.08)'};
-          border: 1px solid ${dm ? 'rgba(8,145,178,0.3)' : 'rgba(8,145,178,0.2)'};
+          background: rgba(8,145,178,0.08);
+          border: 1px solid rgba(8,145,178,0.2);
           text-align: center;
           backdrop-filter: blur(12px);
           flex-shrink: 0;
+        }
+        html.dark .total-badge {
+          background: rgba(8,145,178,0.12);
+          border-color: rgba(8,145,178,0.3);
         }
  
         .total-num {
@@ -318,7 +521,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .total-label {
           font-size: 12px;
           font-weight: 700;
-          color: ${dm ? '#64748b' : '#94a3b8'};
+          color: var(--pg-total-label-color);
           margin-top: 4px;
         }
  
@@ -345,9 +548,9 @@ const handleSubmit = async (e?: React.FormEvent) => {
           width: 100%;
           padding: 12px 20px 12px 44px;
           border-radius: 14px;
-          border: 1.5px solid ${dm ? '#334155' : '#e2e8f0'};
-          background: ${dm ? 'rgba(30,41,59,0.9)' : 'rgba(255,255,255,0.9)'};
-          color: ${dm ? '#f1f5f9' : '#0f172a'};
+          border: 1.5px solid var(--pg-border);
+          background: var(--pg-bg-input);
+          color: var(--pg-text-primary);
           font-family: 'Tajawal', sans-serif;
           font-size: 14px;
           outline: none;
@@ -360,13 +563,15 @@ const handleSubmit = async (e?: React.FormEvent) => {
           border-color: #0891b2;
           box-shadow: 0 0 0 3px rgba(8,145,178,0.12);
         }
+
+        .search-input::placeholder { color: var(--pg-text-muted); }
  
         .search-icon {
           position: absolute;
           left: 14px;
           top: 50%;
           transform: translateY(-50%);
-          color: ${dm ? '#475569' : '#94a3b8'};
+          color: var(--pg-search-icon-color);
           pointer-events: none;
         }
  
@@ -388,9 +593,9 @@ const handleSubmit = async (e?: React.FormEvent) => {
           gap: 7px;
           padding: 9px 16px;
           border-radius: 50px;
-          border: 1.5px solid ${dm ? '#334155' : '#e2e8f0'};
-          background: ${dm ? 'rgba(30,41,59,0.8)' : 'rgba(255,255,255,0.85)'};
-          color: ${dm ? '#94a3b8' : '#475569'};
+          border: 1.5px solid var(--pg-border);
+          background: var(--pg-bg-filter-btn);
+          color: var(--pg-filter-btn-color);
           font-family: 'Tajawal', sans-serif;
           font-size: 13px;
           font-weight: 700;
@@ -432,8 +637,8 @@ const handleSubmit = async (e?: React.FormEvent) => {
         /* ===== PROJECT CARD ===== */
         .proj-card {
           border-radius: 22px;
-          border: 1px solid ${dm ? 'rgba(51,65,85,0.7)' : '#e2e8f0'};
-          background: ${dm ? 'rgba(30,41,59,0.88)' : 'rgba(255,255,255,0.92)'};
+          border: 1px solid var(--pg-border-card);
+          background: var(--pg-bg-card);
           backdrop-filter: blur(12px);
           overflow: hidden;
           transition: all 0.3s ease;
@@ -474,7 +679,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .proj-name {
           font-size: 16px;
           font-weight: 900;
-          color: ${dm ? '#f1f5f9' : '#0f172a'};
+          color: var(--pg-text-primary);
           margin: 0 0 4px;
           line-height: 1.3;
         }
@@ -494,12 +699,12 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .proj-info-item {
           padding: 10px 12px;
           border-radius: 12px;
-          background: ${dm ? 'rgba(51,65,85,0.4)' : '#f8fafc'};
+          background: var(--pg-bg-item);
         }
  
         .proj-info-lbl {
           font-size: 11px;
-          color: ${dm ? '#64748b' : '#94a3b8'};
+          color: var(--pg-text-muted);
           font-weight: 600;
           margin-bottom: 3px;
         }
@@ -507,7 +712,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .proj-info-val {
           font-size: 13px;
           font-weight: 800;
-          color: ${dm ? '#e2e8f0' : '#0f172a'};
+          color: var(--pg-text-primary);
         }
  
         /* ===== AUTHOR ===== */
@@ -517,7 +722,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
           gap: 8px;
           margin-bottom: 14px;
           padding-bottom: 14px;
-          border-bottom: 1px solid ${dm ? 'rgba(51,65,85,0.5)' : '#f1f5f9'};
+          border-bottom: 1px solid var(--pg-border-muted);
         }
  
         .author-dot {
@@ -531,13 +736,13 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .author-name {
           font-size: 13px;
           font-weight: 700;
-          color: ${dm ? '#94a3b8' : '#64748b'};
+          color: var(--pg-text-secondary);
         }
  
         .proj-date {
           font-size: 11px;
-          color: ${dm ? '#475569' : '#94a3b8'};
-          margin-right: 'auto';
+          color: var(--pg-text-faint);
+          margin-right: auto;
         }
  
         /* ===== CARD FOOTER ===== */
@@ -574,7 +779,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
           text-decoration: none;
           padding: 5px 10px;
           border-radius: 8px;
-          background: ${dm ? 'rgba(8,145,178,0.1)' : 'rgba(8,145,178,0.08)'};
+          background: var(--pg-file-link-bg);
           transition: all 0.2s;
         }
         .file-link:hover { background: rgba(8,145,178,0.2); }
@@ -598,7 +803,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
  
         /* ===== SKELETON ===== */
         .skel {
-          background: linear-gradient(90deg, ${dm ? '#1e293b' : '#f1f5f9'} 25%, ${dm ? '#334155' : '#e2e8f0'} 50%, ${dm ? '#1e293b' : '#f1f5f9'} 75%);
+          background: linear-gradient(90deg, var(--pg-bg-skeleton-1) 25%, var(--pg-bg-skeleton-2) 50%, var(--pg-bg-skeleton-1) 75%);
           background-size: 200% 100%;
           border-radius: 8px;
           animation: shimmer 1.5s infinite;
@@ -609,7 +814,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
           grid-column: 1 / -1;
           text-align: center;
           padding: 64px 24px;
-          color: ${dm ? '#475569' : '#94a3b8'};
+          color: var(--pg-text-faint);
         }
  
         .empty-icon {
@@ -657,11 +862,14 @@ const handleSubmit = async (e?: React.FormEvent) => {
           flex-shrink: 0;
         }
  
+        /* ── modal-open scroll lock ── */
+        body.modal-open { overflow: hidden !important; }
+
         /* ===== MODAL ===== */
         .modal-overlay {
           position: fixed; inset: 0; z-index: 100;
           display: flex; align-items: center; justify-content: center;
-          padding: 16px;
+          padding: env(safe-area-inset-top,16px) 16px env(safe-area-inset-bottom,16px);
         }
  
         .modal-backdrop {
@@ -675,23 +883,34 @@ const handleSubmit = async (e?: React.FormEvent) => {
           z-index: 101;
           width: 100%;
           max-width: 600px;
-          max-height: 92vh;
+          max-height: min(92vh, calc(100dvh - 32px));
           overflow-y: auto;
           border-radius: 26px;
           padding: 28px;
-          background: ${dm ? 'rgba(13,20,33,0.98)' : 'rgba(255,255,255,0.99)'};
-          border: 1px solid ${dm ? 'rgba(8,145,178,0.25)' : 'rgba(8,145,178,0.15)'};
+          background: var(--pg-bg-overlay);
+          border: 1px solid rgba(8,145,178,0.15);
           box-shadow: 0 24px 80px rgba(0,0,0,0.35);
           animation: scaleIn 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
+        }
+        html.dark .modal-box {
+          border-color: rgba(8,145,178,0.25);
+        }
+        .dark .modal-box {
+          background: rgba(13,20,33,0.98);
+          border-color: rgba(8,145,178,0.25);
+        }
+        .dark .modal-title {
+          color: #f1f5f9;
+          border-bottom-color: rgba(51,65,85,0.5);
         }
  
         .modal-title {
           font-size: 20px;
           font-weight: 900;
-          color: ${dm ? '#f1f5f9' : '#0f172a'};
+          color: var(--pg-text-primary);
           margin: 0 0 24px;
           padding-bottom: 16px;
-          border-bottom: 1.5px solid ${dm ? 'rgba(51,65,85,0.6)' : '#f1f5f9'};
+          border-bottom: 1.5px solid var(--pg-border-muted);
           display: flex;
           align-items: center;
           gap: 10px;
@@ -704,16 +923,21 @@ const handleSubmit = async (e?: React.FormEvent) => {
           margin-bottom: 8px;
           font-weight: 700;
           font-size: 13px;
-          color: ${dm ? '#94a3b8' : '#374151'};
+          color: var(--pg-text-secondary);
         }
- 
+
+        html.dark .form-label,
+        .dark .form-label {
+          color: #94a3b8;
+        }
+
         .form-input {
           width: 100%;
           padding: 13px 16px;
           border-radius: 13px;
-          border: 1.5px solid ${dm ? '#334155' : '#e2e8f0'};
-          background: ${dm ? 'rgba(51,65,85,0.5)' : '#f8fafc'};
-          color: ${dm ? '#f1f5f9' : '#0f172a'};
+          border: 1.5px solid var(--pg-border);
+          background: var(--pg-bg-input-solid);
+          color: var(--pg-text-primary);
           font-family: 'Tajawal', sans-serif;
           font-size: 14px;
           outline: none;
@@ -721,14 +945,36 @@ const handleSubmit = async (e?: React.FormEvent) => {
           box-sizing: border-box;
         }
 
+        html.dark .form-input,
+        .dark .form-input {
+          background: rgba(51,65,85,0.5);
+          color: #f1f5f9;
+          border-color: #334155;
+        }
+
         .form-input::placeholder {
-          color: ${dm ? '#475569' : '#94a3b8'};
+          color: var(--pg-text-muted);
         }
 
         .form-input:focus {
           border-color: #0891b2;
-          background: ${dm ? 'rgba(8,145,178,0.08)' : '#fff'};
+          background: var(--pg-bg-input-solid);
           box-shadow: 0 0 0 3px rgba(8,145,178,0.12);
+        }
+        html.dark .form-input:focus {
+          background: rgba(8,145,178,0.08);
+        }
+
+        /* ── fix browser-native select color in dark mode ── */
+        html.dark select.form-input,
+        html.dark select.search-input {
+          background-color: rgba(51,65,85,0.5);
+          color: #f1f5f9;
+          color-scheme: dark;
+        }
+        html.dark input.form-input,
+        html.dark input.search-input {
+          color-scheme: dark;
         }
  
         /* ===== TYPE SELECTOR ===== */
@@ -741,8 +987,8 @@ const handleSubmit = async (e?: React.FormEvent) => {
         .type-selector-btn {
           padding: 12px 10px;
           border-radius: 14px;
-          border: 1.5px solid ${dm ? '#334155' : '#e2e8f0'};
-          background: ${dm ? 'rgba(30,41,59,0.7)' : '#f8fafc'};
+          border: 1.5px solid var(--pg-border);
+          background: var(--pg-bg-type-btn);
           cursor: pointer;
           display: flex;
           align-items: center;
@@ -750,7 +996,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
           font-family: 'Tajawal', sans-serif;
           font-size: 13px;
           font-weight: 700;
-          color: ${dm ? '#94a3b8' : '#475569'};
+          color: var(--pg-filter-btn-color);
           transition: all 0.2s ease;
         }
  
@@ -764,19 +1010,22 @@ const handleSubmit = async (e?: React.FormEvent) => {
  
         /* ===== UPLOAD ===== */
         .upload-zone {
-          border: 2px dashed ${dm ? '#334155' : '#cbd5e1'};
+          border: 2px dashed var(--pg-border);
           border-radius: 14px;
           padding: 24px;
           text-align: center;
           cursor: pointer;
           transition: all 0.25s ease;
-          color: ${dm ? '#64748b' : '#94a3b8'};
+          color: var(--pg-upload-zone-color);
           font-weight: 600;
         }
         .upload-zone:hover {
           border-color: #0891b2;
           color: #0891b2;
-          background: ${dm ? 'rgba(8,145,178,0.05)' : 'rgba(8,145,178,0.04)'};
+          background: rgba(8,145,178,0.04);
+        }
+        html.dark .upload-zone:hover {
+          background: rgba(8,145,178,0.05);
         }
  
         .file-selected {
@@ -785,8 +1034,11 @@ const handleSubmit = async (e?: React.FormEvent) => {
           justify-content: space-between;
           padding: 14px 16px;
           border-radius: 13px;
-          background: ${dm ? 'rgba(8,145,178,0.1)' : 'rgba(8,145,178,0.06)'};
+          background: rgba(8,145,178,0.06);
           border: 1px solid rgba(8,145,178,0.2);
+        }
+        html.dark .file-selected {
+          background: rgba(8,145,178,0.1);
         }
  
         /* ===== GRID 2 ===== */
@@ -829,10 +1081,10 @@ const handleSubmit = async (e?: React.FormEvent) => {
           position: absolute; top: 16px; left: 16px;
           width: 32px; height: 32px;
           border-radius: 50%;
-          background: ${dm ? '#334155' : '#f1f5f9'};
+          background: var(--pg-modal-close-bg);
           border: none; cursor: pointer;
           display: flex; align-items: center; justify-content: center;
-          color: ${dm ? '#94a3b8' : '#64748b'};
+          color: var(--pg-modal-close-color);
           font-size: 13px;
           transition: all 0.2s;
         }
@@ -844,10 +1096,30 @@ const handleSubmit = async (e?: React.FormEvent) => {
           .fab-proj      { bottom: 20px; left: 16px; }
           .type-selector-grid { grid-template-columns: 1fr 1fr; }
         }
-      `}</style>
- 
-      <BackgroundAnimation isDarkMode={dm} />
- 
+      
+        /* ══ Mobile Performance ══ */
+        @media (max-width: 768px) {
+          .ev-card, .proj-card, .modal-box { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+          .modal-backdrop, .modal-overlay { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; background: rgba(0,0,0,0.82) !important; }
+          .search-input, .form-input, .filter-btn { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+          input, select, textarea { font-size: 16px !important; touch-action: manipulation; }
+          .proj-card:hover { transform: none !important; }
+          .skel { animation-duration: 2.5s !important; }
+          button, [role=button] { -webkit-tap-highlight-color: transparent; user-select: none; }
+          .modal-overlay { align-items: flex-end !important; padding: 0 !important; }
+          .modal-box {
+            max-width: 100% !important; border-radius: 22px 22px 0 0 !important;
+            position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important; top: auto !important;
+            max-height: 93dvh !important; animation: none !important;
+          }
+        }
+        @media (max-width: 380px) {
+          .proj-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+        }
+`}</style>
+
+      {/* BackgroundAnimation موجود في App.tsx */}
+
       <Header
         onLoginClick={() => navigate('/')}
         onRegisterClick={() => navigate('/')}
@@ -855,8 +1127,8 @@ const handleSubmit = async (e?: React.FormEvent) => {
         isAdmin={isAdmin}
         isEmployee={isEmployee}
         user={user}
-        isDarkMode={dm}
-        onToggleDarkMode={() => setIsDarkMode(!dm)}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={toggleDarkMode}
       />
  
       {/* Hero */}
@@ -1021,6 +1293,17 @@ const handleSubmit = async (e?: React.FormEvent) => {
             const typeInfo = getTypeInfo(project.project_type);
             const statusInfo = STATUS_CONFIG[project.status] || STATUS_CONFIG.pending;
             const isOwn = !isStaff && user?.id === project.user_id;
+            // تحديد مستوى الصلاحية لعرض البيانات
+            // أدمن/موظف = staff → كل البيانات + أزرار + ملف
+            // عميل (client) → مدة + مدينة + ملف (بدون أزرار)
+            // غير مسجل → مدينة + مدة فقط (بدون ملف)
+            const canSeeAllDetails = isStaff; // أدمن وموظف يشوفون كل شي (ميزانية، مدة، مدينة)
+            const canSeeDuration = true; // المدة للجميع
+            const canSeeFile = isStaff || isOwn; // ملف PDF للأدمن والموظف وصاحب المشروع فقط
+            const canDelete = isStaff; // أدمن وموظف فقط
+            const canApprove = isAdmin; // أدمن فقط
+            const associationName = project.user?.association_name || (isOwn ? currentUserAssociation : null);
+
             return (
               <div key={project.id} className="proj-card" style={{
                 animationDelay: `${index * 0.06}s`,
@@ -1029,7 +1312,8 @@ const handleSubmit = async (e?: React.FormEvent) => {
                   boxShadow: dm ? '0 0 0 1px rgba(8,145,178,0.15), 0 4px 20px rgba(8,145,178,0.12)' : '0 0 0 1px rgba(8,145,178,0.1), 0 4px 20px rgba(8,145,178,0.08)',
                 } : {}),
               }}>
-                {/* بادج الاعتماد — يظهر فوق البطاقة كاملاً */}
+
+                {/* ── بادج الاعتماد ── */}
                 {project.status === 'approved' && project.accreditation_body && (
                   <div style={{
                     position: 'relative', overflow: 'hidden',
@@ -1037,13 +1321,11 @@ const handleSubmit = async (e?: React.FormEvent) => {
                     padding: '10px 16px',
                     display: 'flex', alignItems: 'center', gap: 10,
                   }}>
-                    {/* تأثير لمعة متحركة */}
                     <div style={{
                       position: 'absolute', top: 0, left: '-100%', width: '60%', height: '100%',
                       background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent)',
                       animation: 'accred-shine 3s ease-in-out infinite',
                     }} />
-                    {/* أيقونة الختم */}
                     <div style={{
                       width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
                       background: 'rgba(255,255,255,0.15)',
@@ -1069,8 +1351,11 @@ const handleSubmit = async (e?: React.FormEvent) => {
                     </div>
                   </div>
                 )}
+
+                {/* ── الشريط الملوّن العلوي ── */}
                 <div className="proj-card-top" style={{ background: `linear-gradient(90deg, ${typeInfo.color}, ${typeInfo.color}88)` }} />
-                {/* شارة "مشروعي" للعميل */}
+
+                {/* ── شارة "مشروعي" للعميل ── */}
                 {isOwn && (
                   <div style={{
                     position: 'absolute', top: 14, left: 12, zIndex: 2,
@@ -1084,8 +1369,9 @@ const handleSubmit = async (e?: React.FormEvent) => {
                     مشروعي
                   </div>
                 )}
+
                 <div className="proj-card-body">
-                  {/* Header */}
+                  {/* ── Header: اسم المشروع ونوعه ── */}
                   <div className="proj-card-header">
                     <div className="proj-type-icon" style={{ background: dm ? typeInfo.dark : typeInfo.light }}>
                       {typeInfo.emoji}
@@ -1095,31 +1381,23 @@ const handleSubmit = async (e?: React.FormEvent) => {
                       <span className="proj-type-label" style={{ color: typeInfo.color }}>{typeInfo.label}</span>
                     </div>
                   </div>
- 
-                  {/* Author */}
-                  {(project.user?.association_name || (user?.id === project.user_id && currentUserAssociation)) && (
+
+                  {/* ── اسم الجمعية والتاريخ — يظهر للجميع ── */}
+                  {associationName && (
                     <div className="proj-author">
                       <div className="author-dot" />
-                      <span className="author-name">
-                        {project.user?.association_name || currentUserAssociation}
-                      </span>
+                      <span className="author-name">{associationName}</span>
                       <span className="proj-date" style={{ marginRight: 'auto' }}>
                         {new Date(project.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' })}
                       </span>
                     </div>
                   )}
- 
-                  {/* Info grid */}
-                  {(project.duration || project.budget || project.target_area) && (
+
+                  {/* ── شبكة المعلومات الرئيسية - حسب نوع المستخدم ── */}
+                  {canSeeAllDetails ? (
+                    /* للأدمن والموظف: كل البيانات (ميزانية، مدة، مدينة) */
                     <div className="proj-info-grid">
-                      {project.duration && (
-                        <div className="proj-info-item">
-                          <div className="proj-info-lbl">⏱ مدة التنفيذ</div>
-                          <div className="proj-info-val">{project.duration}</div>
-                        </div>
-                      )}
-                      {/* الميزانية: تظهر فقط للأدمن والموظف وصاحب المشروع */}
-                      {project.budget && (isStaff || user?.id === project.user_id) && (
+                      {project.budget && (
                         <div className="proj-info-item">
                           <div className="proj-info-lbl">💰 الميزانية</div>
                           <div className="proj-info-val">
@@ -1127,48 +1405,115 @@ const handleSubmit = async (e?: React.FormEvent) => {
                           </div>
                         </div>
                       )}
+                      {project.duration && (
+                        <div className="proj-info-item">
+                          <div className="proj-info-lbl">⏱ مدة التنفيذ</div>
+                          <div className="proj-info-val">{project.duration}</div>
+                        </div>
+                      )}
                       {project.target_area && (
-                        <div className="proj-info-item" style={{ gridColumn: project.duration && (project.budget && (isStaff || user?.id === project.user_id)) ? '1/-1' : 'auto' }}>
-                          <div className="proj-info-lbl">📍 المنطقة</div>
+                        <div className="proj-info-item" style={{ gridColumn: (project.budget && project.duration) ? 'auto' : '1/-1' }}>
+                          <div className="proj-info-lbl">📍 المدينة المستهدفة</div>
+                          <div className="proj-info-val">{project.target_area}</div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* للعميل وغير المسجل: مدة + مدينة (بدون ميزانية) */
+                    <div className="proj-info-grid">
+                      {project.duration && (
+                        <div className="proj-info-item">
+                          <div className="proj-info-lbl">⏱ مدة التنفيذ</div>
+                          <div className="proj-info-val">{project.duration}</div>
+                        </div>
+                      )}
+                      {project.target_area && (
+                        <div className="proj-info-item" style={{ gridColumn: project.duration ? 'auto' : '1/-1' }}>
+                          <div className="proj-info-lbl">📍 المدينة المستهدفة</div>
                           <div className="proj-info-val">{project.target_area}</div>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Footer */}
+                  {/* ── Footer: حالة المشروع + الأزرار ── */}
                   <div className="proj-card-footer">
+                    {/* حالة المشروع */}
                     <span className="status-badge" style={{ background: statusInfo.bg, color: statusInfo.color }}>
                       <span className="status-dot" style={{ background: statusInfo.dot }} />
                       {statusInfo.label}
                     </span>
 
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                      {/* ملف PDF: يظهر فقط للأدمن والموظف وصاحب المشروع */}
-                      {project.project_file_url && (isStaff || user?.id === project.user_id) && (
-                        <a href={project.project_file_url} target="_blank" rel="noopener noreferrer" className="file-link">
-                          <i className="fas fa-file-download" />
-                          ملف
-                        </a>
+                      {/* ── أزرار الأدمن والموظف فقط ── */}
+                      {isStaff && (
+                        <>
+                          {/* زر الاعتماد: أيقونة للأدمن فقط - يظهر دائماً ── */}
+                          {canApprove && (
+                            <button
+                              onClick={() => { setApproveModal({ open: true, projectId: project.id, projectName: project.project_name }); setAccreditationBody(''); }}
+                              title={project.status === 'approved' ? 'تعديل الاعتماد' : 'اعتماد المشروع'}
+                              style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                width: 32, height: 32, borderRadius: 8,
+                                background: project.status === 'approved' ? 'rgba(22,163,74,0.25)' : 'rgba(22,163,74,0.15)',
+                                border: '1px solid rgba(22,163,74,0.35)',
+                                color: '#15803d', fontSize: 14,
+                                cursor: 'pointer',
+                                fontFamily: "'Tajawal', sans-serif", transition: 'all 0.2s',
+                                flexShrink: 0,
+                              }}
+                              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = 'rgba(22,163,74,0.35)'}
+                              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = project.status === 'approved' ? 'rgba(22,163,74,0.25)' : 'rgba(22,163,74,0.15)'}
+                            >
+                              <i className="fas fa-check-circle" />
+                            </button>
+                          )}
+
+                          {/* زر الحذف: أيقونة للأدمن والموظف ── */}
+                          <button
+                            onClick={() => handleDelete(project.id)}
+                            title="حذف المشروع"
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              width: 32, height: 32, borderRadius: 8,
+                              background: 'rgba(220,38,38,0.12)',
+                              border: '1px solid rgba(220,38,38,0.25)',
+                              color: '#dc2626', fontSize: 14,
+                              cursor: 'pointer',
+                              fontFamily: "'Tajawal', sans-serif", transition: 'all 0.2s',
+                              flexShrink: 0,
+                            }}
+                            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.22)'}
+                            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.12)'}
+                          >
+                            <i className="fas fa-trash-alt" />
+                          </button>
+                        </>
                       )}
-                      {/* زر الاعتماد: للأدمن فقط على المشاريع غير المعتمدة */}
-                      {isAdmin && project.status !== 'approved' && (
-                        <button
-                          onClick={() => { setApproveModal({ open: true, projectId: project.id, projectName: project.project_name }); setAccreditationBody(''); }}
-                          style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700, color: '#15803d', background: 'rgba(22,163,74,0.12)', border: 'none', cursor: 'pointer', padding: '5px 12px', borderRadius: 8, fontFamily: "'Tajawal', sans-serif", transition: 'all 0.2s' }}
-                          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = 'rgba(22,163,74,0.22)'}
-                          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = 'rgba(22,163,74,0.12)'}
+
+                      {/* ── أيقونة الملف: للأدمن والموظف وصاحب المشروع فقط ── */}
+                      {project.project_file_url && canSeeFile && (
+                        <a
+                          href={project.project_file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`${project.file_name || 'ملف المشروع'} - اضغط لفتح الملف`}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            width: 32, height: 32, borderRadius: 8,
+                            background: dm ? 'rgba(8,145,178,0.15)' : 'rgba(8,145,178,0.1)',
+                            border: '1px solid rgba(8,145,178,0.25)',
+                            color: '#0891b2', fontSize: 14,
+                            textDecoration: 'none',
+                            transition: 'all 0.2s',
+                            flexShrink: 0,
+                          }}
+                          onMouseEnter={e => (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(8,145,178,0.25)'}
+                          onMouseLeave={e => (e.currentTarget as HTMLAnchorElement).style.background = dm ? 'rgba(8,145,178,0.15)' : 'rgba(8,145,178,0.1)'}
                         >
-                          <i className="fas fa-check-circle" />
-                          اعتماد
-                        </button>
-                      )}
-                      {/* زر الحذف: للأدمن فقط */}
-                      {isAdmin && (
-                        <button className="del-btn" onClick={() => handleDelete(project.id)}>
-                          <i className="fas fa-trash-alt" />
-                          حذف
-                        </button>
+                          <i className="fas fa-file-pdf" />
+                        </a>
                       )}
                     </div>
                   </div>
@@ -1183,21 +1528,18 @@ const handleSubmit = async (e?: React.FormEvent) => {
       {isStaff && (
         <button
           onClick={() => setShowAdminQueue(true)}
-          title="مراجعة المشاريع"
           style={{
             position: 'fixed', bottom: 32, left: 32, zIndex: 50,
-            width: 62, height: 62, borderRadius: '50%',
+            width: 60, height: 60, borderRadius: '50%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: 'linear-gradient(135deg,#7c3aed,#a855f7)',
             color: 'white', border: 'none', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 24,
-            boxShadow: '0 6px 28px rgba(124,58,237,0.5)',
+            fontSize: 22,
+            boxShadow: '0 6px 24px rgba(124,58,237,0.45)',
             transition: 'all 0.3s cubic-bezier(0.34,1.56,0.64,1)',
           }}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.12) translateY(-3px)'; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1) translateY(0)'; }}
         >
-          ☰
+          <i className="fas fa-shield-alt" />
         </button>
       )}
  
@@ -1234,9 +1576,9 @@ const handleSubmit = async (e?: React.FormEvent) => {
  
       {/* Add Project Modal */}
       {showForm && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "env(safe-area-inset-top,16px) 16px env(safe-area-inset-bottom,16px)" }}>
           <div onClick={() => setShowForm(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(8px)" }} />
-          <div style={{ position: "relative", zIndex: 1001, width: "100%", maxWidth: 600, maxHeight: "92vh", overflowY: "auto", borderRadius: 26, padding: 28, background: dm ? "rgba(13,20,33,0.98)" : "#fff", border: "1px solid rgba(8,145,178,0.15)", boxShadow: "0 24px 80px rgba(0,0,0,0.35)" }}>
+          <div className={dm ? 'dark' : ''} style={{ position: "relative", zIndex: 1001, width: "100%", maxWidth: 600, maxHeight: "92vh", overflowY: "auto", borderRadius: 26, padding: 28, background: dm ? "rgba(13,20,33,0.98)" : "#fff", border: "1px solid rgba(8,145,178,0.15)", boxShadow: "0 24px 80px rgba(0,0,0,0.35)" }}>
             <button onClick={() => setShowForm(false)} style={{ position: "absolute", top: 16, left: 16, width: 36, height: 36, borderRadius: "50%", background: "#fee2e2", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#dc2626", fontSize: 18, fontWeight: 700, lineHeight: 1, fontFamily: "Arial, sans-serif" }}>
               &times;
             </button>
@@ -1449,7 +1791,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
       )}
       {/* Approve Modal */}
       {approveModal.open && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: "env(safe-area-inset-top,16px) 16px env(safe-area-inset-bottom,16px)" }}>
           <div onClick={() => setApproveModal({ open: false, projectId: '', projectName: '' })} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(8px)' }} />
           <div style={{ position: 'relative', zIndex: 201, width: '100%', maxWidth: 440, borderRadius: 24, padding: 28, background: dm ? 'rgba(13,20,33,0.98)' : '#fff', border: '1px solid rgba(22,163,74,0.25)', boxShadow: '0 24px 80px rgba(0,0,0,0.35)' }}>
             <button onClick={() => setApproveModal({ open: false, projectId: '', projectName: '' })} style={{ position: 'absolute', top: 14, left: 14, width: 32, height: 32, borderRadius: '50%', background: '#fee2e2', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Arial, sans-serif' }}>

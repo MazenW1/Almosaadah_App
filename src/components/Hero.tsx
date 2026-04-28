@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-
+import heroLogo from '../img/Logo.png';
 export function Hero() {
   const handleScroll = (href: string) => {
     document.querySelector(href)?.scrollIntoView({ behavior: 'smooth' });
@@ -11,12 +11,12 @@ export function Hero() {
         {/* Logo */}
         <div className="relative inline-block mb-2.5">
           <img
-            src="/img/WhatsApp Image 2026-02-12 at 10.20.07 AM.jpeg"
+            src={heroLogo} // استخدام المتغير المستورد لضمان عمل المسار
             alt="شعار المساعدة الإدارية"
             className="company-logo"
             width="180"
             height="180"
-            loading="eager"
+            loading="eager" // أبقيناها eager لأنها في أول الصفحة (مهمة للسرعة)
           />
         </div>
 

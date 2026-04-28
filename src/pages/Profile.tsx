@@ -1,9 +1,98 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useDarkMode } from '../hooks/useDarkMode';
 import { useNavigate } from 'react-router-dom';
 import { supabase, fetchMyReviews, fetchMyProjects, deleteReview, deleteProject } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import { BackgroundAnimation } from '../components/BackgroundAnimation';
+
+// ─── Security Utilities ───────────────────────────────────────────────────────
+
+/**
+ * Sanitize text input to prevent XSS attacks.
+ * Strips HTML tags and encodes special characters.
+ */
+const sanitizeInput = (value: string): string => {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;')
+    .trim();
+};
+
+/**
+ * Validate email format using RFC 5322 simplified regex.
+ */
+const isValidEmail = (email: string): boolean => {
+  const emailRegex = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+  return emailRegex.test(email) && email.length <= 254;
+};
+
+/**
+ * Validate password strength:
+ * - Min 8 chars
+ * - At least 1 uppercase, 1 lowercase, 1 number
+ */
+const getPasswordStrength = (password: string): { score: number; label: string; color: string } => {
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (/[A-Z]/.test(password)) score++;
+  if (/[a-z]/.test(password)) score++;
+  if (/[0-9]/.test(password)) score++;
+  if (/[^A-Za-z0-9]/.test(password)) score++;
+
+  if (score <= 2) return { score, label: 'ضعيفة', color: '#ef4444' };
+  if (score <= 4) return { score, label: 'متوسطة', color: '#f59e0b' };
+  return { score, label: 'قوية', color: '#10b981' };
+};
+
+/**
+ * Simple in-memory rate limiter per action key.
+ * Prevents brute-force / spamming form submissions.
+ */
+const rateLimiter = (() => {
+  const attempts: Record<string, { count: number; resetAt: number }> = {};
+  return {
+    check: (key: string, maxAttempts = 5, windowMs = 60_000): boolean => {
+      const now = Date.now();
+      if (!attempts[key] || attempts[key].resetAt < now) {
+        attempts[key] = { count: 0, resetAt: now + windowMs };
+      }
+      attempts[key].count++;
+      return attempts[key].count <= maxAttempts;
+    },
+    remaining: (key: string): number => {
+      const now = Date.now();
+      if (!attempts[key] || attempts[key].resetAt < now) return 5;
+      return Math.max(0, 5 - attempts[key].count);
+    },
+  };
+})();
+
+/**
+ * Debounce helper to throttle rapid function calls.
+ */
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ─── Helpers for Events & Jobs in Profile ───
+const fetchMyEvents = (userId: string) =>
+  supabase.from('events').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+
+const fetchMyJobs = (userId: string) =>
+  supabase.from('jobs').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+
+const deleteEvent = (id: string) => supabase.from('events').delete().eq('id', id);
+const deleteJob   = (id: string) => supabase.from('jobs').delete().eq('id', id);
 
 interface Review {
   id: string;
@@ -24,6 +113,43 @@ interface Project {
   target_area?: string;
 }
 
+interface Event {
+  id: string;
+  user_id: string;
+  event_name: string;
+  event_type: string;
+  city: string;
+  event_date: string;
+  status: 'new' | 'completed' | 'cancelled';
+  is_active: boolean;
+  created_at: string;
+}
+
+interface Job {
+  id: string;
+  user_id: string;
+  job_title: string;
+  work_type: string;
+  city: string;
+  status: 'draft' | 'pending_proof' | 'pending_admin' | 'active' | 'rejected' | 'closed';
+  created_at: string;
+}
+
+const EVENT_STATUS_CONFIG = {
+  new:       { bg: '#e0f2fe', color: '#0891b2', dot: '#06b6d4', label: 'جديدة' },
+  completed: { bg: '#dcfce7', color: '#15803d', dot: '#22c55e', label: 'مكتملة' },
+  cancelled: { bg: '#fee2e2', color: '#dc2626', dot: '#ef4444', label: 'ملغية' },
+};
+
+const JOB_STATUS_CONFIG = {
+  draft:         { bg: '#f1f5f9', color: '#64748b', dot: '#94a3b8', label: 'مسودة' },
+  pending_proof: { bg: '#fef9c3', color: '#d97706', dot: '#fbbf24', label: 'بانتظار الرابط' },
+  pending_admin: { bg: '#ecfeff', color: '#0891b2', dot: '#06b6d4', label: 'قيد المراجعة' },
+  active:        { bg: '#dcfce7', color: '#15803d', dot: '#22c55e', label: 'نشطة' },
+  rejected:      { bg: '#fee2e2', color: '#dc2626', dot: '#ef4444', label: 'مرفوضة' },
+  closed:        { bg: '#f1f5f9', color: '#64748b', dot: '#94a3b8', label: 'مغلقة' },
+};
+
 const PROJECT_TYPES: Record<string, { label: string; icon: string; color: string; bg: string }> = {
   emergency:   { label: 'الإغاثة العاجلة',    icon: '🚑', color: '#dc2626', bg: '#fef2f2' },
   development: { label: 'مشاريع التنمية',     icon: '🌱', color: '#16a34a', bg: '#f0fdf4' },
@@ -40,7 +166,7 @@ const getStatusConfig = (status: string) => {
   }
 };
 
-type TabType = 'feed' | 'projects' | 'reviews' | 'settings';
+type TabType = 'feed' | 'projects' | 'reviews' | 'events' | 'jobs' | 'settings';
 
 export function Profile() {
   const navigate = useNavigate();
@@ -61,23 +187,18 @@ export function Profile() {
   const [profileData, setProfileData] = useState<any>(null);
   const [myReviews, setMyReviews] = useState<Review[]>([]);
   const [myProjects, setMyProjects] = useState<Project[]>([]);
+  const [myEvents, setMyEvents] = useState<Event[]>([]);
+  const [myJobs, setMyJobs] = useState<Job[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [loadingEvents, setLoadingEvents] = useState(false);
+  const [loadingJobs, setLoadingJobs] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   const isStaff = isAdmin || isEmployee;
   // أضف هذا في أي صفحة تحتاج تعرف الوضع:
-const [isDarkMode, setIsDarkMode] = useState(
-  document.documentElement.classList.contains('dark')
-);
 
-useEffect(() => {
-  const observer = new MutationObserver(() => {
-    setIsDarkMode(document.documentElement.classList.contains('dark'));
-  });
-  observer.observe(document.documentElement, { attributeFilter: ['class'] });
-  return () => observer.disconnect();
-}, []);
+
 
   useEffect(() => {
     setTimeout(() => setMounted(true), 100);
@@ -86,9 +207,18 @@ useEffect(() => {
   useEffect(() => {
     if (!user?.email) return;
     const fetchProfile = async () => {
-      const { data: emp } = await supabase.from('employees').select('*').eq('employee_email', user.email).maybeSingle();
+      // ── [FIX-1] تحديد الحقول المطلوبة فقط بدلاً من select('*') ──
+      const { data: emp } = await supabase
+        .from('employees')
+        .select('employee_id, employee_name, employee_email, employee_role, is_active, section')
+        .eq('employee_email', user.email)
+        .maybeSingle();
       if (emp) { setProfileData({ ...emp, type: 'employee' }); return; }
-      const { data: usr } = await supabase.from('user').select('*').eq('user_email', user.email).maybeSingle();
+      const { data: usr } = await supabase
+        .from('user')
+        .select('user_id, association_name, user_email, user_phone, entity_type, license_number, is_review_blocked')
+        .eq('user_email', user.email)
+        .maybeSingle();
       if (usr) setProfileData({ ...usr, type: 'client' });
     };
     fetchProfile();
@@ -99,15 +229,26 @@ useEffect(() => {
     const fetchUserData = async () => {
       setLoadingReviews(true);
       setLoadingProjects(true);
+      setLoadingEvents(true);
+      setLoadingJobs(true);
       try {
-        const [reviewsRes, projectsRes] = await Promise.all([fetchMyReviews(user.id), fetchMyProjects(user.id)]);
+        const [reviewsRes, projectsRes, eventsRes, jobsRes] = await Promise.all([
+          fetchMyReviews(user.id),
+          fetchMyProjects(user.id),
+          fetchMyEvents(user.id),
+          fetchMyJobs(user.id),
+        ]);
         if (reviewsRes.data) setMyReviews(reviewsRes.data);
         if (projectsRes.data) setMyProjects(projectsRes.data);
+        if (eventsRes.data) setMyEvents(eventsRes.data);
+        if (jobsRes.data) setMyJobs(jobsRes.data);
       } catch (err) {
         console.error('Error fetching user data:', err);
       } finally {
         setLoadingReviews(false);
         setLoadingProjects(false);
+        setLoadingEvents(false);
+        setLoadingJobs(false);
       }
     };
     fetchUserData();
@@ -115,13 +256,33 @@ useEffect(() => {
 
   const handleUpdateEmail = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmail.trim()) return;
+    const sanitizedEmail = sanitizeInput(newEmail.trim()).toLowerCase();
+    if (!sanitizedEmail) return;
+
+    // Validate email format
+    if (!isValidEmail(sanitizedEmail)) {
+      setEmailMsg({ text: 'صيغة البريد الإلكتروني غير صحيحة', ok: false });
+      return;
+    }
+
+    // ── [FIX-2] منع تغيير الإيميل لنفس الإيميل الحالي ──
+    if (sanitizedEmail === user?.email?.toLowerCase()) {
+      setEmailMsg({ text: 'البريد الجديد مطابق للبريد الحالي', ok: false });
+      return;
+    }
+
+    // Rate limit: max 3 attempts per 10 minutes
+    if (!rateLimiter.check('update-email', 3, 600_000)) {
+      setEmailMsg({ text: 'تم تجاوز الحد المسموح. يرجى الانتظار 10 دقائق قبل المحاولة مجدداً', ok: false });
+      return;
+    }
+
     setLoadingEmail(true);
     setEmailMsg(null);
-    const { error } = await supabase.auth.updateUser({ email: newEmail });
+    const { error } = await supabase.auth.updateUser({ email: sanitizedEmail });
     setLoadingEmail(false);
     if (error) {
-      setEmailMsg({ text: error.message || 'حدث خطأ أثناء تحديث البريد', ok: false });
+      setEmailMsg({ text: 'حدث خطأ أثناء تحديث البريد', ok: false });
     } else {
       setEmailMsg({ text: '✓ تم إرسال رابط تأكيد التغيير إلى بريدك الجديد', ok: true });
       setNewEmail('');
@@ -131,19 +292,39 @@ useEffect(() => {
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassMsg(null);
+
     if (newPassword.length < 8) {
       setPassMsg({ text: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل', ok: false });
+      return;
+    }
+    // ── [FIX-3] حد أقصى لطول الباسورد لمنع DoS ──
+    if (newPassword.length > 128) {
+      setPassMsg({ text: 'كلمة المرور طويلة جداً (الحد الأقصى 128 حرف)', ok: false });
       return;
     }
     if (newPassword !== confirmPassword) {
       setPassMsg({ text: 'كلمتا المرور غير متطابقتان', ok: false });
       return;
     }
+
+    // Enforce minimum password strength
+    const strength = getPasswordStrength(newPassword);
+    if (strength.score < 3) {
+      setPassMsg({ text: 'كلمة المرور ضعيفة جداً. أضف أرقاماً وأحرفاً كبيرة وصغيرة', ok: false });
+      return;
+    }
+
+    // Rate limit: max 5 attempts per 15 minutes
+    if (!rateLimiter.check('update-password', 5, 900_000)) {
+      setPassMsg({ text: 'تم تجاوز الحد المسموح. يرجى الانتظار 15 دقيقة قبل المحاولة مجدداً', ok: false });
+      return;
+    }
+
     setLoadingPass(true);
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     setLoadingPass(false);
     if (error) {
-      setPassMsg({ text: error.message || 'حدث خطأ أثناء تحديث كلمة المرور', ok: false });
+      setPassMsg({ text: 'حدث خطأ أثناء تحديث كلمة المرور', ok: false });
     } else {
       setPassMsg({ text: '✓ تم تحديث كلمة المرور بنجاح', ok: true });
       setNewPassword('');
@@ -152,6 +333,9 @@ useEffect(() => {
   };
 
   const handleDeleteReview = async (id: string) => {
+    // Guard: only admin can delete
+    if (!isAdmin) return;
+    if (!id || typeof id !== 'string' || id.length > 100) return;
     if (!confirm('هل أنت متأكد من حذف هذا الرأي؟')) return;
     try {
       const { error } = await deleteReview(id);
@@ -164,12 +348,45 @@ useEffect(() => {
   };
 
   const handleDeleteProject = async (id: string) => {
+    // Guard: only admin can delete
+    if (!isAdmin) return;
+    if (!id || typeof id !== 'string' || id.length > 100) return;
     if (!confirm('هل أنت متأكد من حذف هذا المشروع؟')) return;
     try {
       const { error } = await deleteProject(id);
       if (error) throw error;
       showToast('تم الحذف بنجاح', 'success');
       setMyProjects(prev => prev.filter(p => p.id !== id));
+    } catch (err) {
+      showToast('حدث خطأ في الحذف', 'error');
+    }
+  };
+
+  const handleDeleteEvent = async (id: string) => {
+    // Guard: only admin can delete
+    if (!isAdmin) return;
+    if (!id || typeof id !== 'string' || id.length > 100) return;
+    if (!confirm('هل أنت متأكد من حذف هذه الفعالية؟')) return;
+    try {
+      const { error } = await deleteEvent(id);
+      if (error) throw error;
+      showToast('تم الحذف بنجاح', 'success');
+      setMyEvents(prev => prev.filter(e => e.id !== id));
+    } catch (err) {
+      showToast('حدث خطأ في الحذف', 'error');
+    }
+  };
+
+  const handleDeleteJob = async (id: string) => {
+    // Guard: only admin can delete
+    if (!isAdmin) return;
+    if (!id || typeof id !== 'string' || id.length > 100) return;
+    if (!confirm('هل أنت متأكد من حذف هذه الوظيفة؟')) return;
+    try {
+      const { error } = await deleteJob(id);
+      if (error) throw error;
+      showToast('تم الحذف بنجاح', 'success');
+      setMyJobs(prev => prev.filter(j => j.id !== id));
     } catch (err) {
       showToast('حدث خطأ في الحذف', 'error');
     }
@@ -191,27 +408,51 @@ useEffect(() => {
     ...myReviews.map(r => ({ type: 'review' as const, data: r, date: new Date(r.created_at) })),
   ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
-  const dm = isDarkMode;
+  const { isDarkMode: dm } = useDarkMode();
 
   return (
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
-        
-        * { box-sizing: border-box; }
+        .mobile-drawer,
+        .modal-box {
+          will-change: transform, opacity;
+        }
 
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .futuristic-header { contain: layout style paint; }
+          .mobile-drawer { contain: layout style paint; }
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        /* ===== RESPONSIVE ROOT ===== */
         .profile-root {
           min-height: 100vh;
           font-family: 'Tajawal', sans-serif;
           direction: rtl;
           position: relative;
+          -webkit-text-size-adjust: 100%;
+          -webkit-tap-highlight-color: transparent;
         }
 
         /* ===== COVER & AVATAR ===== */
         .profile-cover {
-          height: 200px;
+          height: 180px;
           position: relative;
           overflow: hidden;
+        }
+
+        @media (min-width: 480px) {
+          .profile-cover { height: 200px; }
         }
 
         .profile-cover-gradient {
@@ -244,24 +485,35 @@ useEffect(() => {
 
         .profile-identity {
           position: relative;
-          padding: 0 24px 0;
-          margin-top: -48px;
+          padding: 0 16px 0;
+          margin-top: -44px;
           z-index: 10;
         }
 
+        @media (min-width: 480px) {
+          .profile-identity {
+            padding: 0 24px 0;
+            margin-top: -48px;
+          }
+        }
+
         .profile-avatar-ring {
-          width: 96px; height: 96px;
+          width: 80px; height: 80px;
           border-radius: 50%;
           padding: 3px;
           background: linear-gradient(135deg, #06b6d4, #7c3aed);
           box-shadow: 0 8px 32px rgba(8,145,178,0.4);
           display: inline-block;
-          margin-bottom: 12px;
+          margin-bottom: 10px;
           animation: avatarEntrance 0.6s cubic-bezier(0.34,1.56,0.64,1) both;
         }
 
+        @media (min-width: 480px) {
+          .profile-avatar-ring { width: 96px; height: 96px; margin-bottom: 12px; }
+        }
+
         @keyframes avatarEntrance {
-          from { transform: scale(0) rotate(-180deg); opacity: 0; }
+          from { transform: rotate(-180deg); opacity: 0; }
           to   { transform: scale(1) rotate(0deg);   opacity: 1; }
         }
 
@@ -270,29 +522,48 @@ useEffect(() => {
           border-radius: 50%;
           background: ${role.gradient};
           display: flex; align-items: center; justify-content: center;
-          font-size: 32px;
+          font-size: 28px;
           color: white;
           border: 3px solid ${dm ? '#0f172a' : '#ffffff'};
+        }
+
+        @media (min-width: 480px) {
+          .profile-avatar-inner { font-size: 32px; }
         }
 
         /* ===== STATS BAR ===== */
         .profile-stats {
           display: flex;
           gap: 2px;
-          margin-top: 16px;
-          border-radius: 16px;
+          margin-top: 12px;
+          border-radius: 14px;
           overflow: hidden;
           box-shadow: 0 2px 16px rgba(0,0,0,0.06);
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: none;
+        }
+        .profile-stats::-webkit-scrollbar { display: none; }
+
+        @media (min-width: 480px) {
+          .profile-stats { margin-top: 16px; border-radius: 16px; }
         }
 
         .stat-item {
           flex: 1;
-          padding: 14px 8px;
+          min-width: 52px;
+          padding: 10px 6px;
           text-align: center;
           cursor: pointer;
           transition: all 0.2s ease;
           background: ${dm ? 'rgba(30,41,59,0.9)' : 'rgba(255,255,255,0.95)'};
           border-bottom: 3px solid transparent;
+          user-select: none;
+          -webkit-user-select: none;
+        }
+
+        @media (min-width: 480px) {
+          .stat-item { padding: 14px 8px; min-width: unset; }
         }
 
         .stat-item:hover { background: ${dm ? 'rgba(51,65,85,0.9)' : 'rgba(240,249,255,0.95)'}; }
@@ -303,48 +574,74 @@ useEffect(() => {
         }
 
         .stat-number {
-          font-size: 20px;
+          font-size: 17px;
           font-weight: 900;
           color: #0891b2;
           line-height: 1;
         }
 
+        @media (min-width: 480px) {
+          .stat-number { font-size: 20px; }
+        }
+
         .stat-label {
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 600;
           color: ${dm ? '#94a3b8' : '#64748b'};
           margin-top: 3px;
+          white-space: nowrap;
+        }
+
+        @media (min-width: 480px) {
+          .stat-label { font-size: 11px; }
         }
 
         /* ===== TAB NAV ===== */
         .tab-nav {
           display: flex;
-          gap: 4px;
-          padding: 12px 16px;
+          gap: 3px;
+          padding: 10px 12px;
           border-bottom: 1px solid ${dm ? 'rgba(51,65,85,0.6)' : '#f1f5f9'};
           background: ${dm ? 'rgba(15,23,42,0.95)' : 'rgba(255,255,255,0.95)'};
           position: sticky;
           top: 0;
           z-index: 20;
           backdrop-filter: blur(12px);
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: none;
+        }
+        .tab-nav::-webkit-scrollbar { display: none; }
+
+        @media (min-width: 480px) {
+          .tab-nav { gap: 4px; padding: 12px 16px; }
         }
 
         .tab-btn {
           flex: 1;
-          padding: 10px 6px;
+          min-width: 56px;
+          padding: 9px 4px;
           border: none;
-          border-radius: 12px;
+          border-radius: 10px;
           font-family: 'Tajawal', sans-serif;
-          font-size: 13px;
+          font-size: 11px;
           font-weight: 700;
           cursor: pointer;
           transition: all 0.25s ease;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 6px;
+          gap: 4px;
           background: transparent;
           color: ${dm ? '#94a3b8' : '#64748b'};
+          white-space: nowrap;
+          user-select: none;
+          -webkit-user-select: none;
+          touch-action: manipulation;
+        }
+
+        @media (min-width: 480px) {
+          .tab-btn { padding: 10px 6px; font-size: 13px; gap: 6px; min-width: unset; border-radius: 12px; }
         }
 
         .tab-btn.active {
@@ -361,17 +658,22 @@ useEffect(() => {
 
         /* ===== CONTENT AREA ===== */
         .tab-content {
-          padding: 20px 16px;
+          padding: 16px 12px;
           max-width: 680px;
           margin: 0 auto;
+          width: 100%;
+        }
+
+        @media (min-width: 480px) {
+          .tab-content { padding: 20px 16px; }
         }
 
         /* ===== FEED POST CARD ===== */
         .post-card {
           background: ${dm ? 'rgba(30,41,59,0.9)' : 'rgba(255,255,255,0.95)'};
           border: 1px solid ${dm ? 'rgba(51,65,85,0.7)' : '#e2e8f0'};
-          border-radius: 20px;
-          margin-bottom: 16px;
+          border-radius: 16px;
+          margin-bottom: 12px;
           overflow: hidden;
           box-shadow: 0 2px 20px rgba(0,0,0,0.05);
           transition: all 0.3s ease;
@@ -379,10 +681,18 @@ useEffect(() => {
           backdrop-filter: blur(12px);
         }
 
+        @media (min-width: 480px) {
+          .post-card { border-radius: 20px; margin-bottom: 16px; }
+        }
+
         .post-card:hover {
           box-shadow: 0 8px 32px rgba(0,0,0,0.1);
           transform: translateY(-2px);
           border-color: rgba(8,145,178,0.3);
+        }
+
+        @media (hover: none) {
+          .post-card:hover { transform: none; }
         }
 
         @keyframes cardSlideIn {
@@ -393,105 +703,169 @@ useEffect(() => {
         .post-header {
           display: flex;
           align-items: center;
-          gap: 12px;
-          padding: 16px 20px 12px;
+          gap: 10px;
+          padding: 14px 16px 10px;
+        }
+
+        @media (min-width: 480px) {
+          .post-header { gap: 12px; padding: 16px 20px 12px; }
         }
 
         .post-avatar {
-          width: 42px; height: 42px;
+          width: 38px; height: 38px;
           border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
-          font-size: 18px;
+          font-size: 16px;
           flex-shrink: 0;
+        }
+
+        @media (min-width: 480px) {
+          .post-avatar { width: 42px; height: 42px; font-size: 18px; }
         }
 
         .post-meta { flex: 1; min-width: 0; }
 
         .post-name {
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 800;
           color: ${dm ? '#f1f5f9' : '#0f172a'};
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        @media (min-width: 480px) {
+          .post-name { font-size: 14px; }
         }
 
         .post-time {
-          font-size: 12px;
+          font-size: 11px;
           color: ${dm ? '#64748b' : '#94a3b8'};
           margin-top: 1px;
         }
 
+        @media (min-width: 480px) {
+          .post-time { font-size: 12px; }
+        }
+
         .post-type-badge {
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 700;
-          padding: 4px 10px;
+          padding: 3px 8px;
           border-radius: 20px;
           display: flex;
           align-items: center;
-          gap: 4px;
+          gap: 3px;
           flex-shrink: 0;
         }
 
-        .post-body { padding: 0 20px 16px; }
+        @media (min-width: 480px) {
+          .post-type-badge { font-size: 11px; padding: 4px 10px; gap: 4px; }
+        }
+
+        .post-body { padding: 0 16px 14px; }
+
+        @media (min-width: 480px) {
+          .post-body { padding: 0 20px 16px; }
+        }
 
         .post-text {
-          font-size: 14px;
+          font-size: 13px;
           line-height: 1.65;
           color: ${dm ? '#cbd5e1' : '#374151'};
-          margin-bottom: 12px;
+          margin-bottom: 10px;
+          word-break: break-word;
+          overflow-wrap: break-word;
+        }
+
+        @media (min-width: 480px) {
+          .post-text { font-size: 14px; margin-bottom: 12px; }
         }
 
         .post-footer {
-          padding: 12px 20px;
+          padding: 10px 16px;
           border-top: 1px solid ${dm ? 'rgba(51,65,85,0.5)' : '#f1f5f9'};
           display: flex;
           justify-content: space-between;
           align-items: center;
         }
 
+        @media (min-width: 480px) {
+          .post-footer { padding: 12px 20px; }
+        }
+
         /* ===== STAR DISPLAY ===== */
-        .stars-display { display: flex; gap: 3px; direction: ltr; }
-        .star { font-size: 18px; transition: transform 0.1s; }
+        .stars-display { display: flex; gap: 2px; direction: ltr; }
+        .star { font-size: 16px; transition: transform 0.1s; }
+
+        @media (min-width: 480px) {
+          .star { font-size: 18px; }
+        }
+
         .star:hover { transform: scale(1.2); }
 
         /* ===== PROJECT INFO GRID ===== */
         .project-info-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 8px;
-          margin-bottom: 12px;
+          gap: 6px;
+          margin-bottom: 10px;
+        }
+
+        @media (min-width: 480px) {
+          .project-info-grid { gap: 8px; margin-bottom: 12px; }
         }
 
         .project-info-item {
           background: ${dm ? 'rgba(51,65,85,0.5)' : '#f8fafc'};
-          border-radius: 10px;
-          padding: 10px 12px;
+          border-radius: 8px;
+          padding: 8px 10px;
+        }
+
+        @media (min-width: 480px) {
+          .project-info-item { border-radius: 10px; padding: 10px 12px; }
         }
 
         .project-info-label {
-          font-size: 11px;
+          font-size: 10px;
           color: ${dm ? '#64748b' : '#94a3b8'};
           font-weight: 600;
           margin-bottom: 3px;
         }
 
+        @media (min-width: 480px) {
+          .project-info-label { font-size: 11px; }
+        }
+
         .project-info-value {
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 700;
           color: ${dm ? '#e2e8f0' : '#0f172a'};
+        }
+
+        @media (min-width: 480px) {
+          .project-info-value { font-size: 13px; }
         }
 
         /* ===== ACTION BUTTONS ===== */
         .action-btn {
           display: inline-flex;
           align-items: center;
-          gap: 6px;
-          padding: 7px 14px;
-          border-radius: 10px;
+          gap: 5px;
+          padding: 6px 12px;
+          border-radius: 9px;
           border: none;
           font-family: 'Tajawal', sans-serif;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 700;
           cursor: pointer;
           transition: all 0.2s ease;
+          touch-action: manipulation;
+          min-height: 36px;
+        }
+
+        @media (min-width: 480px) {
+          .action-btn { gap: 6px; padding: 7px 14px; border-radius: 10px; font-size: 12px; }
         }
 
         .action-btn.danger {
@@ -506,52 +880,83 @@ useEffect(() => {
         }
         .action-btn.primary:hover { box-shadow: 0 4px 14px rgba(8,145,178,0.4); transform: scale(1.05); }
 
+        @media (hover: none) {
+          .action-btn:hover { transform: none !important; }
+        }
+
         /* ===== PROFILE INFO CARD ===== */
         .info-card {
           background: ${dm ? 'rgba(30,41,59,0.9)' : 'rgba(255,255,255,0.95)'};
           border: 1px solid ${dm ? 'rgba(51,65,85,0.7)' : '#e2e8f0'};
-          border-radius: 20px;
-          padding: 24px;
-          margin-bottom: 16px;
+          border-radius: 16px;
+          padding: 18px;
+          margin-bottom: 14px;
           backdrop-filter: blur(12px);
         }
 
+        @media (min-width: 480px) {
+          .info-card { border-radius: 20px; padding: 24px; margin-bottom: 16px; }
+        }
+
         .info-card-title {
-          font-size: 15px;
+          font-size: 14px;
           font-weight: 800;
           color: ${dm ? '#f1f5f9' : '#0f172a'};
-          margin: 0 0 18px;
+          margin: 0 0 16px;
           display: flex;
           align-items: center;
-          gap: 10px;
-          padding-bottom: 14px;
+          gap: 8px;
+          padding-bottom: 12px;
           border-bottom: 1.5px solid ${dm ? 'rgba(51,65,85,0.6)' : '#f1f5f9'};
         }
 
+        @media (min-width: 480px) {
+          .info-card-title { font-size: 15px; margin: 0 0 18px; gap: 10px; padding-bottom: 14px; }
+        }
+
         .info-title-icon {
-          width: 34px; height: 34px;
-          border-radius: 10px;
+          width: 30px; height: 30px;
+          border-radius: 8px;
           display: flex; align-items: center; justify-content: center;
-          font-size: 15px;
+          font-size: 14px;
+          flex-shrink: 0;
+        }
+
+        @media (min-width: 480px) {
+          .info-title-icon { width: 34px; height: 34px; border-radius: 10px; font-size: 15px; }
         }
 
         .info-row {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 11px 0;
+          padding: 10px 0;
           border-bottom: 1px solid ${dm ? 'rgba(51,65,85,0.4)' : '#f8fafc'};
-          font-size: 14px;
+          font-size: 13px;
+          gap: 8px;
         }
+
+        @media (min-width: 480px) {
+          .info-row { padding: 11px 0; font-size: 14px; }
+        }
+
         .info-row:last-child { border-bottom: none; padding-bottom: 0; }
-        .info-label { color: ${dm ? '#64748b' : '#64748b'}; font-weight: 600; }
-        .info-value { color: ${dm ? '#e2e8f0' : '#0f172a'}; font-weight: 700; direction: ltr; }
+        .info-label { color: ${dm ? '#64748b' : '#64748b'}; font-weight: 600; flex-shrink: 0; }
+        .info-value {
+          color: ${dm ? '#e2e8f0' : '#0f172a'};
+          font-weight: 700;
+          direction: ltr;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          max-width: 60%;
+        }
 
         /* ===== FORM INPUTS ===== */
         .form-input {
           width: 100%;
-          padding: 13px 16px;
-          border-radius: 12px;
+          padding: 12px 14px;
+          border-radius: 10px;
           border: 1.5px solid ${dm ? '#334155' : '#e2e8f0'};
           background: ${dm ? 'rgba(51,65,85,0.5)' : '#f8fafc'};
           color: ${dm ? '#f1f5f9' : '#0f172a'};
@@ -561,6 +966,12 @@ useEffect(() => {
           transition: all 0.2s ease;
           direction: ltr;
           text-align: right;
+          -webkit-appearance: none;
+          appearance: none;
+        }
+
+        @media (min-width: 480px) {
+          .form-input { padding: 13px 16px; border-radius: 12px; }
         }
 
         .form-input:focus {
@@ -569,33 +980,52 @@ useEffect(() => {
           box-shadow: 0 0 0 3px rgba(8,145,178,0.12);
         }
 
+        /* Prevent iOS zoom on inputs */
+        @media (max-width: 480px) {
+          .form-input { font-size: 16px; }
+        }
+
         .submit-btn {
           width: 100%;
-          padding: 14px;
-          border-radius: 12px;
+          padding: 13px;
+          border-radius: 10px;
           border: none;
           font-family: 'Tajawal', sans-serif;
-          font-size: 15px;
+          font-size: 14px;
           font-weight: 700;
           cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
           gap: 8px;
-          margin-top: 16px;
+          margin-top: 14px;
           transition: all 0.25s ease;
+          min-height: 48px;
+          touch-action: manipulation;
+        }
+
+        @media (min-width: 480px) {
+          .submit-btn { padding: 14px; border-radius: 12px; font-size: 15px; margin-top: 16px; }
         }
 
         .submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
         .submit-btn:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.05); }
 
+        @media (hover: none) {
+          .submit-btn:not(:disabled):hover { transform: none; }
+        }
+
         .msg-box {
-          padding: 11px 15px;
+          padding: 10px 14px;
           border-radius: 10px;
-          margin-top: 12px;
+          margin-top: 10px;
           font-size: 13px;
           font-weight: 600;
           animation: fadeSlide 0.3s ease;
+        }
+
+        @media (min-width: 480px) {
+          .msg-box { padding: 11px 15px; }
         }
 
         .pw-toggle {
@@ -604,29 +1034,37 @@ useEffect(() => {
           transform: translateY(-50%);
           background: none; border: none;
           cursor: pointer; color: #94a3b8;
-          font-size: 15px; padding: 4px;
+          font-size: 15px; padding: 6px;
           transition: color 0.2s;
+          min-width: 32px; min-height: 32px;
+          display: flex; align-items: center; justify-content: center;
         }
         .pw-toggle:hover { color: #0891b2; }
 
         /* ===== QUICK LINKS ===== */
         .quick-link {
           width: 100%;
-          padding: 14px;
-          border-radius: 14px;
+          padding: 12px;
+          border-radius: 12px;
           border: 1.5px solid ${dm ? '#334155' : '#e2e8f0'};
           background: ${dm ? 'rgba(30,41,59,0.7)' : '#f8fafc'};
           color: ${dm ? '#cbd5e1' : '#475569'};
           font-family: 'Tajawal', sans-serif;
-          font-size: 15px;
+          font-size: 14px;
           font-weight: 700;
           cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 10px;
+          gap: 8px;
           margin-bottom: 10px;
           transition: all 0.25s ease;
+          min-height: 48px;
+          touch-action: manipulation;
+        }
+
+        @media (min-width: 480px) {
+          .quick-link { padding: 14px; border-radius: 14px; font-size: 15px; gap: 10px; }
         }
 
         .quick-link:hover {
@@ -643,19 +1081,31 @@ useEffect(() => {
         }
         .quick-link.primary:hover { box-shadow: 0 4px 18px rgba(8,145,178,0.4); color: white; }
 
+        @media (hover: none) {
+          .quick-link:hover { transform: none; }
+        }
+
         /* ===== EMPTY STATE ===== */
         .empty-state {
           text-align: center;
-          padding: 48px 24px;
+          padding: 36px 16px;
           color: ${dm ? '#64748b' : '#94a3b8'};
         }
 
+        @media (min-width: 480px) {
+          .empty-state { padding: 48px 24px; }
+        }
+
         .empty-icon {
-          font-size: 56px;
+          font-size: 48px;
           display: block;
-          margin-bottom: 16px;
+          margin-bottom: 14px;
           opacity: 0.5;
           animation: float 3s ease-in-out infinite;
+        }
+
+        @media (min-width: 480px) {
+          .empty-icon { font-size: 56px; margin-bottom: 16px; }
         }
 
         @keyframes float {
@@ -679,56 +1129,74 @@ useEffect(() => {
         /* ===== BACK BUTTON ===== */
         .back-btn {
           position: absolute;
-          top: 16px;
-          right: 16px;
+          top: 12px;
+          right: 12px;
           z-index: 20;
           background: rgba(255,255,255,0.15);
           backdrop-filter: blur(8px);
           border: 1px solid rgba(255,255,255,0.25);
-          border-radius: 12px;
-          padding: 8px 16px;
+          border-radius: 10px;
+          padding: 7px 12px;
           color: white;
           font-family: 'Tajawal', sans-serif;
           font-weight: 700;
-          font-size: 13px;
+          font-size: 12px;
           cursor: pointer;
           display: flex;
           align-items: center;
-          gap: 6px;
+          gap: 5px;
           transition: all 0.2s ease;
+          min-height: 38px;
+          touch-action: manipulation;
         }
+
+        @media (min-width: 480px) {
+          .back-btn { top: 16px; right: 16px; border-radius: 12px; padding: 8px 16px; font-size: 13px; }
+        }
+
         .back-btn:hover { background: rgba(255,255,255,0.25); }
 
         /* ===== DARK MODE TOGGLE ===== */
         .dm-toggle {
           position: absolute;
-          top: 16px;
-          left: 16px;
+          top: 12px;
+          left: 12px;
           z-index: 20;
           background: rgba(255,255,255,0.15);
           backdrop-filter: blur(8px);
           border: 1px solid rgba(255,255,255,0.25);
-          border-radius: 12px;
-          padding: 8px 12px;
+          border-radius: 10px;
+          padding: 7px 10px;
           color: white;
-          font-size: 16px;
+          font-size: 15px;
           cursor: pointer;
           transition: all 0.2s ease;
           display: flex;
           align-items: center;
+          min-height: 38px;
+          touch-action: manipulation;
         }
+
+        @media (min-width: 480px) {
+          .dm-toggle { top: 16px; left: 16px; border-radius: 12px; padding: 8px 12px; font-size: 16px; }
+        }
+
         .dm-toggle:hover { background: rgba(255,255,255,0.25); }
 
         /* ===== ROLE BADGE ===== */
         .role-badge {
           display: inline-flex;
           align-items: center;
-          gap: 5px;
-          padding: 4px 12px;
+          gap: 4px;
+          padding: 3px 10px;
           border-radius: 20px;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 700;
           margin-top: 4px;
+        }
+
+        @media (min-width: 480px) {
+          .role-badge { gap: 5px; padding: 4px 12px; font-size: 12px; }
         }
 
         /* ===== LOADING SKELETON ===== */
@@ -746,10 +1214,20 @@ useEffect(() => {
         /* ===== DARK MODE BASE ===== */
         .dark-bg { background: #0f172a; }
         .light-bg { background: transparent; }
-      `}</style>
+
+        /* ===== SAFE AREA INSETS (mobile notch/home bar) ===== */
+        .profile-root {
+          padding-bottom: env(safe-area-inset-bottom, 0px);
+        }
+      
+        @media (max-width: 768px) {
+          * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+          input, select, textarea { font-size: 16px !important; }
+          button { -webkit-tap-highlight-color: transparent; }
+        }
+        `}</style>
 
       <div className={`profile-root ${dm ? 'dark-bg' : 'light-bg'}`}>
-        <BackgroundAnimation isDarkMode={dm} />
 
         <div style={{ position: 'relative', zIndex: 5, maxWidth: '680px', margin: '0 auto' }}>
           {/* Cover */}
@@ -765,7 +1243,7 @@ useEffect(() => {
               رجوع
             </button>
 
-            <button className="dm-toggle" onClick={() => setIsDarkMode(!dm)}>
+            <button className="dm-toggle" onClick={() => { document.documentElement.classList.toggle('dark'); localStorage.setItem('darkMode', String(!dm)); window.dispatchEvent(new Event('darkmode-change')); }}>
               {dm ? '☀️' : '🌙'}
             </button>
           </div>
@@ -798,7 +1276,7 @@ useEffect(() => {
                 className={`stat-item ${activeTab === 'feed' ? 'active' : ''}`}
                 onClick={() => setActiveTab('feed')}
               >
-                <div className="stat-number">{myProjects.length + myReviews.length}</div>
+                <div className="stat-number">{myProjects.length + myReviews.length + myEvents.length + myJobs.length}</div>
                 <div className="stat-label">المنشورات</div>
               </div>
               <div
@@ -807,6 +1285,20 @@ useEffect(() => {
               >
                 <div className="stat-number">{myProjects.length}</div>
                 <div className="stat-label">المشاريع</div>
+              </div>
+              <div
+                className={`stat-item ${activeTab === 'events' ? 'active' : ''}`}
+                onClick={() => setActiveTab('events')}
+              >
+                <div className="stat-number">{myEvents.length}</div>
+                <div className="stat-label">الفعاليات</div>
+              </div>
+              <div
+                className={`stat-item ${activeTab === 'jobs' ? 'active' : ''}`}
+                onClick={() => setActiveTab('jobs')}
+              >
+                <div className="stat-number">{myJobs.length}</div>
+                <div className="stat-label">الوظائف</div>
               </div>
               <div
                 className={`stat-item ${activeTab === 'reviews' ? 'active' : ''}`}
@@ -834,6 +1326,12 @@ useEffect(() => {
                 </button>
                 <button className={`tab-btn ${activeTab === 'projects' ? 'active' : ''}`} onClick={() => setActiveTab('projects')}>
                   <i className="fas fa-folder" /> المشاريع
+                </button>
+                <button className={`tab-btn ${activeTab === 'events' ? 'active' : ''}`} onClick={() => setActiveTab('events')}>
+                  <i className="fas fa-calendar-alt" /> الفعاليات
+                </button>
+                <button className={`tab-btn ${activeTab === 'jobs' ? 'active' : ''}`} onClick={() => setActiveTab('jobs')}>
+                  <i className="fas fa-briefcase" /> الوظائف
                 </button>
                 <button className={`tab-btn ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => setActiveTab('reviews')}>
                   <i className="fas fa-feather" /> الآراء
@@ -993,12 +1491,14 @@ useEffect(() => {
                             {(item.data as Review).is_active ? '✓ منشور' : '⏳ قيد المراجعة'}
                           </span>
                         )}
-                        <button
-                          className="action-btn danger"
-                          onClick={() => item.type === 'project' ? handleDeleteProject(item.data.id) : handleDeleteReview(item.data.id)}
-                        >
-                          <i className="fas fa-trash-alt" /> حذف
-                        </button>
+                        {isAdmin && (
+                          <button
+                            className="action-btn danger"
+                            onClick={() => item.type === 'project' ? handleDeleteProject(item.data.id) : handleDeleteReview(item.data.id)}
+                          >
+                            <i className="fas fa-trash-alt" /> حذف
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))
@@ -1101,9 +1601,146 @@ useEffect(() => {
                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusInfo.dot, display: 'inline-block' }} />
                             {statusInfo.label}
                           </span>
-                          <button className="action-btn danger" onClick={() => handleDeleteProject(p.id)}>
-                            <i className="fas fa-trash-alt" /> حذف
-                          </button>
+                          {isAdmin && (
+                            <button className="action-btn danger" onClick={() => handleDeleteProject(p.id)}>
+                              <i className="fas fa-trash-alt" /> حذف
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {/* ===== EVENTS TAB ===== */}
+            {activeTab === 'events' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: dm ? '#f1f5f9' : '#0f172a' }}>
+                    فعالياتي ({myEvents.length})
+                  </h2>
+                  <button className="action-btn primary" onClick={() => navigate('/events')}
+                    style={{ background: 'linear-gradient(135deg,#0891b2,#06b6d4)' }}>
+                    <i className="fas fa-plus" /> فعالية جديدة
+                  </button>
+                </div>
+
+                {loadingEvents ? (
+                  [1, 2].map(i => (
+                    <div key={i} className="post-card" style={{ padding: 20 }}>
+                      <div className="skeleton" style={{ height: 18, width: '60%', marginBottom: 10, borderRadius: 6 }} />
+                      <div className="skeleton" style={{ height: 40, borderRadius: 8 }} />
+                    </div>
+                  ))
+                ) : myEvents.length === 0 ? (
+                  <div className="empty-state">
+                    <span className="empty-icon">📅</span>
+                    <p style={{ fontWeight: 700 }}>لا توجد فعاليات بعد</p>
+                    <button className="action-btn primary" onClick={() => navigate('/events')} style={{ margin: '12px auto 0' }}>
+                      <i className="fas fa-plus" /> أضف فعاليتك الأولى
+                    </button>
+                  </div>
+                ) : (
+                  myEvents.map((ev, idx) => {
+                    const evStatus = EVENT_STATUS_CONFIG[ev.status] ?? EVENT_STATUS_CONFIG['new'];
+                    return (
+                      <div key={ev.id} className="post-card" style={{ animationDelay: `${idx * 0.06}s` }}>
+                        <div className="post-header">
+                          <div className="post-avatar" style={{ background: '#e0f2fe', fontSize: 22 }}>📅</div>
+                          <div className="post-meta">
+                            <div className="post-name">{ev.event_name}</div>
+                            <div className="post-time">
+                              {ev.city} · {ev.event_date
+                                ? new Date(ev.event_date).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : new Date(ev.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' })}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#0891b2' }}>{ev.event_type}</span>
+                        </div>
+                        <div className="post-footer">
+                          <span style={{
+                            fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20,
+                            background: evStatus.bg, color: evStatus.color,
+                            display: 'flex', alignItems: 'center', gap: 5,
+                          }}>
+                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: evStatus.dot, display: 'inline-block' }} />
+                            {evStatus.label}
+                          </span>
+                          {isAdmin && (
+                            <button className="action-btn danger" onClick={() => handleDeleteEvent(ev.id)}>
+                              <i className="fas fa-trash-alt" /> حذف
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {/* ===== JOBS TAB ===== */}
+            {activeTab === 'jobs' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: dm ? '#f1f5f9' : '#0f172a' }}>
+                    وظائفي ({myJobs.length})
+                  </h2>
+                  <button className="action-btn primary" onClick={() => navigate('/jobs')}
+                    style={{ background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
+                    <i className="fas fa-plus" /> وظيفة جديدة
+                  </button>
+                </div>
+
+                {loadingJobs ? (
+                  [1, 2].map(i => (
+                    <div key={i} className="post-card" style={{ padding: 20 }}>
+                      <div className="skeleton" style={{ height: 18, width: '60%', marginBottom: 10, borderRadius: 6 }} />
+                      <div className="skeleton" style={{ height: 40, borderRadius: 8 }} />
+                    </div>
+                  ))
+                ) : myJobs.length === 0 ? (
+                  <div className="empty-state">
+                    <span className="empty-icon">💼</span>
+                    <p style={{ fontWeight: 700 }}>لا توجد وظائف بعد</p>
+                    <button className="action-btn primary" onClick={() => navigate('/jobs')} style={{ margin: '12px auto 0', background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
+                      <i className="fas fa-plus" /> أضف وظيفتك الأولى
+                    </button>
+                  </div>
+                ) : (
+                  myJobs.map((job, idx) => {
+                    const jobStatus = JOB_STATUS_CONFIG[job.status] ?? JOB_STATUS_CONFIG['draft'];
+                    const workLabels: Record<string, string> = { remote: 'عن بُعد', field: 'ميداني', hybrid: 'هجين' };
+                    return (
+                      <div key={job.id} className="post-card" style={{ animationDelay: `${idx * 0.06}s` }}>
+                        <div className="post-header">
+                          <div className="post-avatar" style={{ background: '#f3e8ff', fontSize: 22 }}>💼</div>
+                          <div className="post-meta">
+                            <div className="post-name">{job.job_title}</div>
+                            <div className="post-time">
+                              {job.city} · {workLabels[job.work_type] ?? job.work_type}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed' }}>
+                            {new Date(job.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' })}
+                          </span>
+                        </div>
+                        <div className="post-footer">
+                          <span style={{
+                            fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20,
+                            background: jobStatus.bg, color: jobStatus.color,
+                            display: 'flex', alignItems: 'center', gap: 5,
+                          }}>
+                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: jobStatus.dot, display: 'inline-block' }} />
+                            {jobStatus.label}
+                          </span>
+                          {isAdmin && (
+                            <button className="action-btn danger" onClick={() => handleDeleteJob(job.id)}>
+                              <i className="fas fa-trash-alt" /> حذف
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -1167,9 +1804,11 @@ useEffect(() => {
                         }}>
                           {r.is_active ? '✓ منشور' : '⏳ قيد المراجعة'}
                         </span>
-                        <button className="action-btn danger" onClick={() => handleDeleteReview(r.id)}>
-                          <i className="fas fa-trash-alt" /> حذف
-                        </button>
+                        {isAdmin && (
+                          <button className="action-btn danger" onClick={() => handleDeleteReview(r.id)}>
+                            <i className="fas fa-trash-alt" /> حذف
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))
@@ -1272,6 +1911,9 @@ useEffect(() => {
                         onFocus={() => setFocusedField('email')}
                         onBlur={() => setFocusedField(null)}
                         className="form-input"
+                        autoComplete="email"
+                        maxLength={254}
+                        spellCheck={false}
                         required
                       />
                     </div>
@@ -1310,12 +1952,34 @@ useEffect(() => {
                           onChange={(e) => setNewPassword(e.target.value)}
                           className="form-input"
                           style={{ paddingLeft: 42 }}
+                          autoComplete="new-password"
+                          maxLength={128}
                           required
                         />
-                        <button type="button" className="pw-toggle" onClick={() => setShowPassword(!showPassword)}>
+                        <button type="button" className="pw-toggle" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}>
                           {showPassword ? '🙈' : '👁️'}
                         </button>
                       </div>
+                      {/* Password strength meter */}
+                      {newPassword && (() => {
+                        const strength = getPasswordStrength(newPassword);
+                        return (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                              {[1, 2, 3, 4, 5, 6].map(i => (
+                                <div key={i} style={{
+                                  flex: 1, height: 4, borderRadius: 4,
+                                  background: i <= strength.score ? strength.color : (dm ? '#334155' : '#e2e8f0'),
+                                  transition: 'background 0.3s ease',
+                                }} />
+                              ))}
+                            </div>
+                            <p style={{ fontSize: 12, color: strength.color, margin: 0, fontWeight: 700 }}>
+                              قوة كلمة المرور: {strength.label}
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div style={{ position: 'relative', marginBottom: 14 }}>
                       <label style={{ display: 'block', marginBottom: 7, fontWeight: 700, fontSize: 13, color: dm ? '#cbd5e1' : '#374151' }}>
@@ -1328,6 +1992,8 @@ useEffect(() => {
                           value={confirmPassword}
                           onChange={(e) => setConfirmPassword(e.target.value)}
                           className="form-input"
+                          autoComplete="new-password"
+                          maxLength={128}
                           style={{
                             paddingLeft: 42,
                             borderColor: confirmPassword && newPassword !== confirmPassword ? '#ef4444' : undefined,

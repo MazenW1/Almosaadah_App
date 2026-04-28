@@ -1,52 +1,67 @@
 // App.tsx
-import React from 'react';
-import { useState, useEffect, Suspense, lazy } from 'react';
+// ─────────────────────────────────────────────────────────────────────────────
+// المكوّن الجذر للتطبيق — يحتوي على الـ Routes والـ Modals والمنطق العام
+// ─────────────────────────────────────────────────────────────────────────────
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import AOS from 'aos';
 import 'aos/dist/aos.css';
 
-import { useAuth } from './hooks/useAuth';
-import { useToast, ToastContainer } from './hooks/useToast';
-import { useNews } from './hooks/useNews';
-import { supabase, uploadImage, fetchUserProfile } from './lib/supabase';
+import { useAuth }                        from './hooks/useAuth';
+import { useToast, ToastContainer }       from './hooks/useToast';
+import { useNews }                        from './hooks/useNews';
+import { useDarkMode }                    from './hooks/useDarkMode';
+import { supabase }                       from './lib/supabase';
+import { notifyAdminNewServiceRequest }   from './lib/notificationHelpers';
 
-import { BackgroundAnimation } from './components/BackgroundAnimation';
-import { Header } from './components/Header';
-import { Hero } from './components/Hero';
-import { VideoSection } from './components/VideoSection';
-import { Services } from './components/Services';
-import { Products } from './components/Products';
-import { Partners } from './components/Partners';
-import { NewsSection } from './components/NewsSection';
-import { Stats } from './components/Stats';
-import { Footer } from './components/Footer';
-import { FloatingSocialBar } from './components/FloatingSocialBar';
-import { LoginModal } from './components/LoginModal';
-import { RegisterModal } from './components/RegisterModal';
-import { ServiceRequestModal } from './components/ServiceRequestModal';
-import { ForgotPasswordModal } from './components/ForgotPasswordModal';
-import Profile from './pages/Profile';
-import Dashboard from './pages/Dashboard';
-import PhoneVerification from './pages/PhoneVerification';
-import ReviewsPage from './pages/ReviewsPage';
-import ProjectsPage from './pages/ProjectsPage';
+import { BackgroundAnimation }  from './components/BackgroundAnimation';
+import { Header }               from './components/Header';
+import { Hero }                 from './components/Hero';
+import { VideoSection }         from './components/VideoSection';
+import { Services }             from './components/Services';
+import { Products }             from './components/Products';
+import { Partners }             from './components/Partners';
+import { NewsSection }          from './components/NewsSection';
+import { Stats }                from './components/Stats';
+import { Footer }               from './components/Footer';
+import { LoginModal }           from './components/LoginModal';
+import { RegisterModal }        from './components/RegisterModal';
+import { ServiceRequestModal }  from './components/ServiceRequestModal';
+import { ForgotPasswordModal }  from './components/ForgotPasswordModal';
 
-// ─── Protected Route ──────────────────────────────────────────────────────────
+import Profile           from './pages/Profile';
+import Dashboard         from './pages/Dashboard';
+import EmailVerification from './pages/EmailVerification';
+import ReviewsPage       from './pages/ReviewsPage';
+import ProjectsPage      from './pages/ProjectsPage';
+import EventsPage        from './pages/EventsPage';
+import JobsPage          from './pages/JobsPage';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ ProtectedRoute ══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, hasSession } = useAuth();
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center font-tajawal text-cyan-600 gap-3">
-      <i className="fas fa-spinner fa-spin text-2xl" />
-      <span>جاري التحقق من الجلسة...</span>
-    </div>
-  );
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center font-tajawal text-cyan-600 gap-3">
+        <i className="fas fa-spinner fa-spin text-2xl" />
+        <span>جاري التحقق...</span>
+      </div>
+    );
+  }
 
-  if (!user) return <Navigate to="/" replace />;
+  if (!user || !hasSession) return <Navigate to="/" replace />;
+
   return <>{children}</>;
 }
 
-// ─── Error Boundary ───────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Error Boundary ══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean }
@@ -57,7 +72,7 @@ class ErrorBoundary extends React.Component<
   }
   static getDerivedStateFromError() { return { hasError: true }; }
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('App Error:', error, info);
+    console.error('[ErrorBoundary]', error, info);
   }
   render() {
     if (this.state.hasError) {
@@ -79,82 +94,88 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-// ─── Error translator ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Error Translator ════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const AUTH_ERROR_MAP: Record<string, string> = {
+  'User already registered':                              'هذا البريد الإلكتروني مسجل مسبقاً',
+  'Invalid login credentials':                            'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+  'Email not confirmed':                                  'يرجى تأكيد بريدك الإلكتروني أولاً',
+  'Password should be at least 6 characters':             'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
+  'Unable to validate email address: invalid format':     'صيغة البريد الإلكتروني غير صحيحة',
+  'signup is disabled':                                   'التسجيل معطّل حالياً، تواصل مع الإدارة',
+  'Email rate limit exceeded':                            'تم تجاوز الحد المسموح به، حاول لاحقاً',
+  'over_email_send_rate_limit':                           'تم إرسال رسائل كثيرة، حاول بعد قليل',
+  'Failed to fetch':                                      'تعذّر الاتصال بالخادم، تحقق من الإنترنت',
+  'NetworkError':                                         'خطأ في الشبكة، تحقق من الاتصال',
+};
+
 function translateAuthError(message: string): string {
-  const errorMap: Record<string, string> = {
-    'User already registered': 'هذا البريد الإلكتروني مسجل مسبقاً',
-    'Invalid login credentials': 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
-    'Email not confirmed': 'يرجى تأكيد بريدك الإلكتروني أولاً',
-    'Password should be at least 6 characters': 'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
-    'Unable to validate email address: invalid format': 'صيغة البريد الإلكتروني غير صحيحة',
-    'signup is disabled': 'التسجيل معطّل حالياً، تواصل مع الإدارة',
-    'Email rate limit exceeded': 'تم تجاوز الحد المسموح به، حاول لاحقاً',
-    'over_email_send_rate_limit': 'تم إرسال رسائل كثيرة، حاول بعد قليل',
-    'Failed to fetch': 'تعذّر الاتصال بالخادم، تحقق من الإنترنت',
-    'NetworkError': 'خطأ في الشبكة، تحقق من الاتصال',
-  };
-  for (const [key, value] of Object.entries(errorMap)) {
+  for (const [key, value] of Object.entries(AUTH_ERROR_MAP)) {
     if (message.includes(key)) return value;
   }
   return message;
 }
 
-// ─── Inner App ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ AppInner ════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 function AppInner() {
   const navigate = useNavigate();
+
   const {
-    user, isAdmin, isEmployee,
-    signIn, signOut,
-    loading: authLoading, profileLoading,
+    user,
+    userProfile,
+    isAdmin,
+    isEmployee,
+    signIn,
+    signOut,
+    loading: authLoading,
+    profileLoading,
   } = useAuth();
 
   const { toasts, showToast, removeToast } = useToast();
-  const { news, loading: newsLoading, hasMore, loadMore, deleteNews, createNews, updateNews } = useNews(
-    user?.id,
-    isAdmin || isEmployee
-  );
 
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const {
+    news, loading: newsLoading,
+    hasMore, loadMore,
+    deleteNews, createNews, updateNews,
+  } = useNews(user?.id, isAdmin || isEmployee);
+
+  // ── Modal states ──
+  const [isLoginModalOpen,    setIsLoginModalOpen]    = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
-  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
-  const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
-  const [selectedService, setSelectedService] = useState('');
+  const [isServiceModalOpen,  setIsServiceModalOpen]  = useState(false);
+  const [isForgotPasswordOpen,setIsForgotPasswordOpen]= useState(false);
+
+  // ── Service/Product selection ──
+  const [selectedService,     setSelectedService]     = useState('');
   const [selectedProductType, setSelectedProductType] = useState<string | undefined>();
-  const [isProduct, setIsProduct] = useState(false);
+  const [isProduct,           setIsProduct]           = useState(false);
 
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    return localStorage.getItem('darkMode') === 'true';
-  });
+  // ── Dark mode ──
+  const { isDarkMode, toggleDarkMode } = useDarkMode();
 
-  const toggleDarkMode = () => {
-    setIsDarkMode(prev => {
-      const next = !prev;
-      localStorage.setItem('darkMode', String(next));
-      return next;
-    });
-  };
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', isDarkMode);
-  }, [isDarkMode]);
+  const isAnyModalOpen = isLoginModalOpen || isRegisterModalOpen || isServiceModalOpen || isForgotPasswordOpen;
 
   useEffect(() => {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     AOS.init({
       duration: prefersReducedMotion ? 0 : 800,
-      once: true,
-      offset: 100,
-      disable: prefersReducedMotion,
+      once:     true,
+      offset:   100,
+      disable:  prefersReducedMotion,
     });
   }, []);
 
-  // ─── Handle Login ────────────────────────────────────────────────────────────
+  // ─── Handle Login ─────────────────────────────────────────────────────────────
   const handleLogin = async (email: string, password: string) => {
     try {
       const { error } = await signIn(email, password);
       if (error) {
-        const msg = translateAuthError(error.message);
-        showToast(msg, 'error');
+        showToast(translateAuthError(error.message), 'error');
         return { error };
       }
       showToast('تم تسجيل الدخول بنجاح! 🎉', 'success');
@@ -167,7 +188,7 @@ function AppInner() {
     }
   };
 
-  // ─── Handle Sign Out ─────────────────────────────────────────────────────────
+  // ─── Handle Sign Out ──────────────────────────────────────────────────────────
   const handleSignOut = async () => {
     try {
       await signOut();
@@ -178,18 +199,16 @@ function AppInner() {
     }
   };
 
-  // ─── Handle Register ─────────────────────────────────────────────────────────
-  // ✅ الإصلاح: نستخدم signUp فقط — Supabase يرسل رمز التحقق تلقائياً
-  // لا نحتاج signOut ولا signInWithOtp بعدها
+  // ─── Handle Register ──────────────────────────────────────────────────────────
   const handleSubmitRegister = async (data: any) => {
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: data.email,
+        email:    data.email,
         password: data.password,
         options: {
           data: {
             association_name: data.associationName,
-            entity_type: data.entityType,
+            entity_type:      data.entityType,
           },
         },
       });
@@ -197,19 +216,15 @@ function AppInner() {
       if (authError) throw new Error(translateAuthError(authError.message));
       if (!authData.user) throw new Error('فشل إنشاء الحساب، حاول مرة أخرى');
 
-      // ✅ حفظ بيانات المستخدم مؤقتاً — يُدخل في DB بعد تأكيد OTP فقط
+      // حفظ بيانات التسجيل مؤقتاً لإدراجها في جدول user بعد التحقق
       sessionStorage.setItem('pending_registration', JSON.stringify({
-        user_id: authData.user.id,
+        user_id:          authData.user.id,
         association_name: data.associationName,
-        user_phone: data.phone,
-        user_email: data.email,
-        license_number: data.license,
-        entity_type: data.entityType,
+        user_phone:       data.phone,
+        user_email:       data.email,
+        license_number:   data.license,
+        entity_type:      data.entityType,
       }));
-
-      // ✅ لا نحتاج signOut ولا signInWithOtp
-      // Supabase أرسل رمز التحقق تلقائياً مع signUp
-      // RegisterModal سينتقل تلقائياً لـ Step 3
 
     } catch (err: any) {
       const msg = translateAuthError(err.message || 'فشل إنشاء الحساب');
@@ -218,8 +233,8 @@ function AppInner() {
     }
   };
 
-  // ─── Handle Service/Product Selection ─────────────────────────────────────────
-  const handleServiceSelect = async (serviceName: string, type?: string) => {
+  // ─── Handle Service / Product Selection ───────────────────────────────────────
+  const handleServiceSelect = (serviceName: string, type?: string) => {
     if (!user) {
       showToast('يرجى تسجيل الدخول أولاً لطلب الخدمة', 'error');
       setIsLoginModalOpen(true);
@@ -234,7 +249,9 @@ function AppInner() {
   // ─── Handle Service Submit ────────────────────────────────────────────────────
   const handleServiceSubmit = async (data: any) => {
     if (!user) { showToast('يرجى تسجيل الدخول أولاً', 'error'); return; }
+
     try {
+      // جلب service_id من اسم الخدمة
       let serviceId: string | null = null;
       if (data.serviceName) {
         const { data: svc } = await supabase
@@ -242,50 +259,65 @@ function AppInner() {
           .select('service_id')
           .eq('service_name', data.serviceName)
           .maybeSingle();
-        serviceId = svc?.service_id || null;
+        serviceId = svc?.service_id ?? null;
       }
 
-      const { error } = await supabase.from('service_requests').insert([{
-        user_id: user.id,
-        service_id: serviceId,
-        request_notes: data.notes || null,
-        request_status: 'pending_review',
-        package_type: data.packageType || null,
-      }]);
+      // إدراج الطلب وإرجاع الـ ID الجديد
+      const { data: inserted, error } = await supabase
+        .from('service_requests')
+        .insert([{
+          user_id:        user.id,
+          service_id:     serviceId,
+          request_notes:  data.notes       || null,
+          request_status: 'pending_review',
+          package_type:   data.packageType || null,
+        }])
+        .select('request_id')
+        .single();
 
       if (error) throw error;
-      showToast('تم إرسال طلبك بنجاح! سنراجعه ونتواصل معك قريباً 🎉', 'success');
-      setIsServiceModalOpen(false);
-      setSelectedProductType(undefined);
-      setIsProduct(false);
+
+      // ✅ إشعار الأدمن فور إرسال الطلب
+      const clientName =
+        userProfile?.association_name ||
+        user.email?.split('@')[0]     ||
+        'عميل';
+
+      await notifyAdminNewServiceRequest({
+        clientName,
+        serviceName: data.serviceName || 'خدمة',
+        requestId:   inserted.request_id,
+      });
+
     } catch (err: any) {
       showToast(err.message || 'حدث خطأ غير متوقع', 'error');
       throw err;
     }
   };
 
-  // ─── Handle News ─────────────────────────────────────────────────────────────
+  // ─── Handle News Delete ───────────────────────────────────────────────────────
   const handleDeleteNews = async (id: string) => {
     if (!isAdmin && !isEmployee) { showToast('غير مصرح لك بالحذف!', 'error'); return; }
-    if (confirm('هل أنت متأكد من حذف هذا الخبر نهائياً؟')) {
-      try {
-        await deleteNews(id);
-        showToast('تم الحذف بنجاح ✓', 'success');
-      } catch {
-        showToast('حدث خطأ أثناء الحذف', 'error');
-      }
+    if (!confirm('هل أنت متأكد من حذف هذا الخبر نهائياً؟')) return;
+    try {
+      await deleteNews(id);
+      showToast('تم الحذف بنجاح ✓', 'success');
+    } catch {
+      showToast('حدث خطأ أثناء الحذف', 'error');
     }
   };
 
+  // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <ErrorBoundary>
-      <div className="min-h-screen font-tajawal">
-        <BackgroundAnimation isDarkMode={isDarkMode} />
+      <div className="min-h-screen font-tajawal" style={{ isolation: 'isolate' }}>
+
+        <BackgroundAnimation isDarkMode={isDarkMode} isPaused={isAnyModalOpen} />
         <ToastContainer toasts={toasts} onRemove={removeToast} />
 
         <Header
-          onLoginClick={() => setIsLoginModalOpen(true)}
-          onRegisterClick={() => setIsRegisterModalOpen(true)}
+          onLoginClick={    () => setIsLoginModalOpen(true)}
+          onRegisterClick={ () => setIsRegisterModalOpen(true)}
           onSignOut={handleSignOut}
           isAdmin={isAdmin}
           isEmployee={isEmployee}
@@ -319,21 +351,23 @@ function AppInner() {
               </main>
             }
           />
-
-          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-          <Route path="/reviews" element={<ReviewsPage />} />
+          <Route path="/events"   element={<EventsPage />} />
+          <Route path="/jobs"     element={<JobsPage />} />
+          <Route path="/reviews"  element={<ReviewsPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/verify-phone" element={<PhoneVerification />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="/verify-email" element={<EmailVerification />} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/profile"   element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+          <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
 
+        {/* ── Modals ── */}
         <LoginModal
           isOpen={isLoginModalOpen}
           onClose={() => setIsLoginModalOpen(false)}
           onLogin={handleLogin}
           onSwitchToRegister={() => { setIsLoginModalOpen(false); setIsRegisterModalOpen(true); }}
-          onForgotPassword={() => { setIsLoginModalOpen(false); setIsForgotPasswordOpen(true); }}
+          onForgotPassword={()  => { setIsLoginModalOpen(false); setIsForgotPasswordOpen(true); }}
         />
 
         <RegisterModal
@@ -362,10 +396,15 @@ function AppInner() {
           onClose={() => setIsForgotPasswordOpen(false)}
           onSwitchToLogin={() => { setIsForgotPasswordOpen(false); setIsLoginModalOpen(true); }}
         />
+
       </div>
     </ErrorBoundary>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ App (Root) ══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export default function App() {
   return <AppInner />;

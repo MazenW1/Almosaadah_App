@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">المساعدة الإدارية</string>
+    <string name="title_activity_main">المساعدة الإدارية</string>
+    <string name="package_name">sa.almosaadah.app</string>
+    <string name="custom_url_scheme">sa.almosaadah.app</string>
+</resources>

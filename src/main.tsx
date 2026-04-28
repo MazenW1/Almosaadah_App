@@ -1,7 +1,7 @@
 // main.tsx
 import { createRoot } from 'react-dom/client';
 import { StrictMode } from 'react';
-import { BrowserRouter } from 'react-router-dom';
+import { HashRouter } from 'react-router-dom'; // تم تغيير النوع هنا
 import App from './App';
 import { AuthProvider } from './hooks/useAuth';
 import './index.css';
@@ -13,10 +13,10 @@ const root = createRoot(container);
 
 root.render(
   <StrictMode>
-    <BrowserRouter>
+    <HashRouter> {/* تم التغيير من BrowserRouter إلى HashRouter */}
       <AuthProvider>
         <App />
       </AuthProvider>
-    </BrowserRouter>
+    </HashRouter>
   </StrictMode>
 );

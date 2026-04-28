@@ -1,11 +1,31 @@
 // pages/Dashboard.tsx
 import { useNavigate } from 'react-router-dom';
 import { useState, useEffect, useCallback, useRef, useTransition } from 'react';
+import { useDarkMode } from '../hooks/useDarkMode';
+
+/* ── Rate Limiters ── */
+const createRateLimiter = (max: number, windowMs: number, label = '') => {
+  const reqs: number[] = []; let blocked = 0;
+  return { canProceed: (): boolean => {
+    const now = Date.now();
+    if (now < blocked) return false;
+    while (reqs.length && reqs[0] < now - windowMs) reqs.shift();
+    if (reqs.length >= max) { blocked = now + Math.min(windowMs * (reqs.length - max + 1), 300000); if (label) console.warn('[RateLimit]', label); return false; }
+    reqs.push(now); return true;
+  }};
+};
+const apiRateLimiter    = createRateLimiter(15, 60000, 'dashboard-api');
+const submitRateLimiter = createRateLimiter(5,  60000, 'dashboard-submit');
 import AOS from 'aos';
-import { supabase, supabaseAdmin } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
-import { BackgroundAnimation } from '../components/BackgroundAnimation';
 import RequestsTable from '../components/RequestsTable';
+import {
+  notifyAdminNewServiceRequest,
+  notifyAssignment,
+  notifyStatusChange,
+  notifyRequestRejected,
+} from '../lib/notificationHelpers';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Role = 'admin' | 'employee' | 'client' | null;
@@ -219,8 +239,8 @@ function ContractCell({ requestId, contractUrl, onView, onUploaded, showToast }:
 function TableWrapper({ children, isDarkMode }: { children: React.ReactNode; isDarkMode: boolean }) {
   return (
     <div className={`rounded-2xl overflow-hidden shadow-sm border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">{children}</table>
+      <div className="overflow-x-auto -mx-0">
+       <table className="w-full border-collapse min-w-[600px]">{children}</table>
       </div>
     </div>
   );
@@ -312,22 +332,14 @@ export default function Dashboard() {
   const { user, isAdmin, isEmployee, isClient, loading: authLoading, profileLoading } = useAuth();
 
   const [, startTransition] = useTransition();
+  const { isDarkMode: dm } = useDarkMode();
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<Role>(null);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [activeTab, setActiveTab] = useState('');
   // أضف هذا في أي صفحة تحتاج تعرف الوضع:
-const [isDarkMode, setIsDarkMode] = useState(
-  document.documentElement.classList.contains('dark')
-);
 
-useEffect(() => {
-  const observer = new MutationObserver(() => {
-    setIsDarkMode(document.documentElement.classList.contains('dark'));
-  });
-  observer.observe(document.documentElement, { attributeFilter: ['class'] });
-  return () => observer.disconnect();
-}, []);
+
 
   // ── Data State ─────────────────────────────────────────────────────────
   const [clientRequests, setClientRequests] = useState<ServiceRequest[]>([]);
@@ -345,9 +357,23 @@ useEffect(() => {
   const [empDateFilter, setEmpDateFilter] = useState<DateFilter>('all');
   const [adminStatusFilter, setAdminStatusFilter] = useState('all');
   const [adminDateFilter, setAdminDateFilter] = useState<DateFilter>('all');
+  const [assignedStatusFilter, setAssignedStatusFilter] = useState('all');
+  const [assignedDateFilter, setAssignedDateFilter] = useState<DateFilter>('all');
 
   // ── Modal State ────────────────────────────────────────────────────────
   const [modals, setModals] = useState({ reject: false, assign: false, updateStatus: false, empNote: false, pdf: false, addEmp: false, newRequest: false, news: false });
+
+  // Prevent body scroll & header shake when any modal is open
+  useEffect(() => {
+    const anyOpen = Object.values(modals).some(Boolean);
+    if (anyOpen) {
+      document.documentElement.style.setProperty('--scrollbar-w', `${window.innerWidth - document.documentElement.clientWidth}px`);
+      document.body.classList.add('modal-open');
+    } else {
+      document.body.classList.remove('modal-open');
+    }
+    return () => { document.body.classList.remove('modal-open'); };
+  }, [modals]);
   const [currentReqId, setCurrentReqId] = useState('');
   const [rejectNotes, setRejectNotes] = useState('');
   const [selectedEmployee, setSelectedEmployee] = useState('');
@@ -361,6 +387,8 @@ useEffect(() => {
   const [requestFormLoading, setRequestFormLoading] = useState(false);
   const [newsForm, setNewsForm] = useState({ title: '', excerpt: '', image: '', category: 'عام', date: new Date().toISOString().split('T')[0], tweet: '', author: '', device_info: '', city_info: '' });
   const [newsFormLoading, setNewsFormLoading] = useState(false);
+  const [newsImageUploading, setNewsImageUploading] = useState(false);
+  const newsImageRef = useRef<HTMLInputElement>(null);
   const [loadingStates, setLoadingStates] = useState({ client: false, emp: false, admin: false, employees: false });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
@@ -607,12 +635,23 @@ useEffect(() => {
   const handleReject = async () => {
     if (!rejectNotes.trim()) { showToast('اكتب سبب الرفض', 'error'); return; }
     try {
+      const { data: reqData } = await supabase
+        .from('service_requests')
+        .select('user_id, service:service_id(service_name)')
+        .eq('request_id', currentReqId)
+        .maybeSingle();
+
       const { error } = await supabase.from('service_requests')
         .update({ request_status: 'rejected', admin_notes: rejectNotes, updated_at: new Date().toISOString() }).eq('request_id', currentReqId);
       if (error) throw error;
       setModals(m => ({ ...m, reject: false })); setRejectNotes('');
       showToast('تم رفض الطلب');
       loadAdminRequests(); loadAdminStats();
+
+      if (reqData?.user_id) {
+        const serviceName = (reqData as any).service?.service_name || 'الخدمة';
+        await notifyRequestRejected({ clientUserId: reqData.user_id, serviceName, requestId: currentReqId, reason: rejectNotes });
+      }
     } catch (err: any) { showToast('خطأ: ' + err.message, 'error'); }
   };
 
@@ -630,12 +669,23 @@ useEffect(() => {
     if (!selectedEmployee) { showToast('اختر موظفاً', 'error'); return; }
     const emp = activeEmployees.find(e => e.employee_id === selectedEmployee);
     try {
+      const { data: reqData } = await supabase
+        .from('service_requests')
+        .select('user_id, service:service_id(service_name)')
+        .eq('request_id', currentReqId)
+        .maybeSingle();
+
       const { error } = await supabase.from('service_requests')
         .update({ assigned_to: selectedEmployee, employee_id: selectedEmployee, request_status: 'approved', updated_at: new Date().toISOString() }).eq('request_id', currentReqId);
       if (error) throw error;
       setModals(m => ({ ...m, assign: false }));
       showToast(`تم الإسناد لـ ${emp?.employee_name || ''} ✓`);
       loadAdminRequests(); loadAdminStats();
+
+      if (reqData?.user_id && emp) {
+        const serviceName = (reqData as any).service?.service_name || 'الخدمة';
+        await notifyAssignment({ clientUserId: reqData.user_id, employeeUserId: emp.employee_id, employeeName: emp.employee_name, serviceName, requestId: currentReqId });
+      }
     } catch (err: any) { showToast('خطأ: ' + err.message, 'error'); }
   };
 
@@ -643,13 +693,45 @@ useEffect(() => {
 
   const handleUpdateStatus = async () => {
     try {
+      // جلب user_id واسم الخدمة بشكل منفصل لتجنب مشاكل الـ join
+      const { data: reqData, error: reqError } = await supabase
+        .from('service_requests')
+        .select('user_id, service_id')
+        .eq('request_id', currentReqId)
+        .maybeSingle();
+
+      if (reqError) console.error('[UpdateStatus] fetch req error:', reqError.message);
+
+      let serviceName = 'الخدمة';
+      if (reqData?.service_id) {
+        const { data: svcData } = await supabase
+          .from('services')
+          .select('service_name')
+          .eq('service_id', reqData.service_id)
+          .maybeSingle();
+        if (svcData?.service_name) serviceName = svcData.service_name;
+      }
+
       const upd: any = { request_status: newStatus, updated_at: new Date().toISOString() };
       if (empNote.trim()) upd.admin_notes = empNote.trim();
       const { error } = await supabase.from('service_requests').update(upd).eq('request_id', currentReqId);
       if (error) throw error;
+
       setModals(m => ({ ...m, updateStatus: false }));
       showToast('تم تحديث الحالة ✓');
       if (currentUser) loadEmpRequests(currentUser.id);
+
+      if (reqData?.user_id) {
+        await notifyStatusChange({
+          clientUserId: reqData.user_id,
+          newStatus,
+          serviceName,
+          requestId: currentReqId,
+          note: empNote.trim() || undefined,
+        });
+      } else {
+        console.warn('[UpdateStatus] لم يتم العثور على user_id للطلب:', currentReqId);
+      }
     } catch (err: any) { showToast('خطأ: ' + err.message, 'error'); }
   };
 
@@ -721,15 +803,38 @@ useEffect(() => {
 
   const handleSubmitRequest = async () => {
     if (!requestForm.serviceName) { showToast('يرجى تعبئة اسم الخدمة', 'error'); return; }
+    if (!submitRateLimiter.canProceed()) { showToast('يرجى الانتظار قبل إرسال طلب آخر', 'error'); return; }
     setRequestFormLoading(true);
     try {
       const { data: svcData } = await supabase.from('services').select('service_id').eq('service_name', requestForm.serviceName).maybeSingle();
+
+      // ── منع التكرار: تحقق من وجود طلب نشط لنفس الخدمة
+      if (svcData?.service_id) {
+        const { data: existingReq } = await supabase
+          .from('service_requests')
+          .select('request_id, request_status')
+          .eq('user_id', currentUser?.id)
+          .eq('service_id', svcData.service_id)
+          .in('request_status', ['pending_review', 'in_progress', 'approved'])
+          .maybeSingle();
+        if (existingReq) {
+          showToast('⚠️ لديك طلب نشط لهذه الخدمة بالفعل — يرجى انتظار إتمامه أو إلغائه أولاً', 'error');
+          setRequestFormLoading(false); return;
+        }
+      }
+
       const { error } = await supabase.from('service_requests').insert([{ user_id: currentUser?.id, service_id: svcData?.service_id || null, request_notes: requestForm.notes || null, request_status: 'pending_review' }]);
       if (error) throw error;
       setModals(m => ({ ...m, newRequest: false }));
       setRequestForm({ serviceName: '', serviceDesc: '', notes: '' });
       showToast('تم إرسال الطلب بنجاح ✓');
       if (currentUser) loadClientRequests(currentUser.id);
+
+      await notifyAdminNewServiceRequest({
+        clientName:  currentUser?.name || 'عميل',
+        serviceName: requestForm.serviceName,
+        requestId:   '',
+      });
     } catch (err: any) { showToast('خطأ في إرسال الطلب: ' + (err.message || ''), 'error'); }
     finally { setRequestFormLoading(false); }
   };
@@ -741,22 +846,52 @@ useEffect(() => {
       const { error } = await supabase.from('news').insert([{ title: newsForm.title, excerpt: newsForm.excerpt, image: newsForm.image || null, category: newsForm.category || 'عام', date: newsForm.date || new Date().toISOString().split('T')[0], tweet: newsForm.tweet || null, device_info: newsForm.device_info || null, timestamp: Date.now(), created_by: currentUser?.id || null }]);
       if (error) throw error;
       setModals(m => ({ ...m, news: false }));
-      setNewsForm({ title: '', excerpt: '', image: '', category: 'عام', date: new Date().toISOString().split('T')[0], tweet: '', author: '', device_info: '', city_info: '' });
+     setNewsForm({ title: '', excerpt: '', image: '', category: 'عام', date: new Date().toISOString().split('T')[0], tweet: '', author: '', device_info: '', city_info: '' });
+      if (newsImageRef.current) newsImageRef.current.value = '';
       showToast('تم نشر الخبر بنجاح ✓');
     } catch (err: any) { showToast('خطأ في نشر الخبر: ' + (err.message || ''), 'error'); }
     finally { setNewsFormLoading(false); }
   };
+  const handleNewsImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('حجم الصورة يجب أن يكون أقل من 5MB', 'error');
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    showToast('الملف المحدد ليس صورة', 'error');
+    return;
+  }
+  setNewsImageUploading(true);
+  try {
+    const ext = file.name.split('.').pop();
+    const path = `news/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error: uploadErr } = await supabase.storage
+      .from('news-images')
+      .upload(path, file, { upsert: false, contentType: file.type });
+    if (uploadErr) throw uploadErr;
+    const { data: urlData } = supabase.storage.from('news-images').getPublicUrl(path);
+    setNewsForm(f => ({ ...f, image: urlData.publicUrl }));
+    showToast('تم رفع الصورة بنجاح ✓');
+  } catch (err: any) {
+    showToast('خطأ في رفع الصورة: ' + (err.message || ''), 'error');
+  } finally {
+    setNewsImageUploading(false);
+    if (newsImageRef.current) newsImageRef.current.value = '';
+  }
+};
 
   // ── Loading Screen (after all hooks) ───────────────────────────────────
   if (authLoading || profileLoading || loading) {
     return (
       <div className={`fixed inset-0 flex flex-col items-center justify-center z-[9999]
-        ${isDarkMode ? 'bg-slate-900' : 'bg-gradient-to-br from-slate-50 to-cyan-50'}`}>
+        ${dm ? 'bg-slate-900' : 'bg-gradient-to-br from-slate-50 to-cyan-50'}`}>
         <div className="relative">
-          <i className={`fas fa-spinner fa-spin text-6xl mb-4 ${isDarkMode ? 'text-cyan-400' : 'text-cyan-500'}`} />
+          <i className={`fas fa-spinner fa-spin text-6xl mb-4 ${dm ? 'text-cyan-400' : 'text-cyan-500'}`} />
           <div className="absolute inset-0 animate-ping rounded-full bg-cyan-400 opacity-20" />
         </div>
-        <p className={`font-semibold animate-pulse mt-4 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>جاري تحميل لوحة التحكم...</p>
+        <p className={`font-semibold animate-pulse mt-4 ${dm ? 'text-slate-400' : 'text-slate-500'}`}>جاري تحميل لوحة التحكم...</p>
       </div>
     );
   }
@@ -800,6 +935,22 @@ useEffect(() => {
     return matchesStatus && matchesDate && matchesSearch;
   });
 
+  // ── الفلترة لجدول متابعة الموظفين ──────────────────────────────────────────
+  const filteredAssignedReqs = assignedRequests.filter(r => {
+    const matchesStatus = assignedStatusFilter === 'all' || r.request_status === assignedStatusFilter;
+    const matchesDate = applyDateFilter(r.created_at, assignedDateFilter);
+    return matchesStatus && matchesDate;
+  });
+
+  // ── إحصائيات جدول متابعة الموظفين ─────────────────────────────────────────
+  const assignedStats = {
+    total:          assignedRequests.length,
+    pending_review: assignedRequests.filter(r => r.request_status === 'pending_review').length,
+    in_progress:    assignedRequests.filter(r => ['in_progress','approved'].includes(r.request_status)).length,
+    completed:      assignedRequests.filter(r => r.request_status === 'completed').length,
+    cancelled:      assignedRequests.filter(r => ['cancelled','rejected'].includes(r.request_status)).length,
+  };
+
   // ── إحصائيات العميل ─────────────────────────────────────────────────────
   const clientStats = {
     pending: clientRequests.filter(r => r.request_status === 'pending_review').length,
@@ -834,106 +985,28 @@ useEffect(() => {
   };
   const tabs = tabsConfig[role || 'client'] || [];
   const openPdf = (url: string) => { setPdfUrl(url); setModals(m => ({ ...m, pdf: true })); };
+  
 
   // ════════════════════════════════════════════════════════════════════════
   // ─── RENDER ──────────────────────────────────────────────────────────────
   // ════════════════════════════════════════════════════════════════════════
   return (
-    <div className={`relative min-h-screen font-tajawal ${isDarkMode ? 'bg-slate-900' : 'bg-slate-50'}`} dir="rtl">
-      <BackgroundAnimation isDarkMode={isDarkMode} />
-      {/* طبقة المحتوى فوق الأنيميشن */}
-      <div className="relative z-10">
-      <ToastContainer toasts={toasts} onRemove={removeToast} />
+    <div className="relative min-h-dvh font-tajawal overflow-x-hidden" dir="rtl">
 
-      {/* ── Dashboard Header (Unified) ─────────────────────────────── */}
-      <div className={`sticky top-0 z-30 px-4 sm:px-6 py-3 flex items-center justify-between border-b backdrop-blur-md shadow-sm
-        ${isDarkMode ? 'bg-slate-900/95 border-slate-700/80' : 'bg-white/95 border-slate-200'}`}
-        data-aos="fade-down" data-aos-duration="400">
-        <div className="flex items-center gap-3">
-          {/* زر الصفحة الرئيسية */}
-          <button onClick={() => navigate('/')}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm shadow-md flex-shrink-0 transition-all hover:scale-105 hover:shadow-lg
-              ${isDarkMode ? 'bg-slate-700 text-cyan-400 hover:bg-slate-600' : 'bg-gradient-to-br from-cyan-600 to-cyan-400 text-white'}`}
-            title="الصفحة الرئيسية">
-            <i className="fas fa-home" />
-          </button>
-          <div className="flex items-center gap-3 px-2">
-            {/* أيقونة المستخدم حسب الرتبة */}
-            <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm shadow-md flex-shrink-0
-              ${role === 'admin' ? 'bg-gradient-to-br from-violet-600 to-violet-400'
-              : role === 'employee' ? 'bg-gradient-to-br from-sky-600 to-sky-400'
-              : 'bg-gradient-to-br from-cyan-600 to-cyan-400'}`}>
-              <i className={`fas ${role === 'admin' ? 'fa-shield-alt' : role === 'employee' ? 'fa-user-tie' : 'fa-user'}`} />
-            </div>
-
-  {/* اسم المنظمة أو الموظف */}
-  <div className="flex flex-col">
-    <span className="user-name-text text-sm font-bold text-white leading-tight">
-      {profileLoading || loading ? (
-        <i className="fas fa-spinner fa-spin text-xs opacity-50" />
-      ) : (
-        // الترتيب: اسم الجمعية (للعميل) أو اسم الموظف (للإدارة) أو الإيميل كحل أخير
-        currentUser?.name || user?.email?.split('@')[0]
-      )}
-    </span>
-    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-      {role === 'admin' ? 'مدير النظام' : role === 'employee' ? 'موظف' : 'عميل'}
-    </span>
-  </div>
-</div>
-          <div className="leading-tight">
-            <h1 className={`text-base font-extrabold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
-              {role === 'admin' ? 'لوحة تحكم الأدمن' : role === 'employee' ? 'لوحة الموظف' : 'لوحة العميل'}
-            </h1>
-            <p className={`text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>{currentUser?.name}</p>
-          </div>
-          <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border flex-shrink-0
-            ${role === 'admin' ? (isDarkMode ? 'bg-violet-900/40 text-violet-400 border-violet-700' : 'bg-violet-50 text-violet-700 border-violet-200')
-            : role === 'employee' ? (isDarkMode ? 'bg-sky-900/40 text-sky-400 border-sky-700' : 'bg-sky-50 text-sky-700 border-sky-200')
-            : (isDarkMode ? 'bg-cyan-900/40 text-cyan-400 border-cyan-700' : 'bg-cyan-50 text-cyan-700 border-cyan-200')}`}>
-            {roleLabel}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {(isAdmin || isEmployee) && (
-            <button onClick={() => showToast('المساعد الذكي قريباً!', 'info')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all text-xs font-bold border
-                ${isDarkMode ? 'bg-slate-800 text-slate-300 border-slate-600 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-cyan-300 hover:text-cyan-600'}`}>
-              <i className="fas fa-robot text-[11px]" />
-              <span className="hidden sm:inline">مساعد ذكي</span>
-            </button>
-          )}
-          {/* زر الدارك مود */}
-          <button onClick={() => setIsDarkMode(!isDarkMode)}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all text-sm border hover:scale-105
-              ${isDarkMode
-                ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 hover:bg-amber-500/30'
-                : 'bg-slate-50 text-slate-500 border-slate-200 hover:border-cyan-300 hover:text-cyan-600'}`}
-            title={isDarkMode ? 'الوضع الفاتح' : 'الوضع الداكن'}>
-            <i className={`fas ${isDarkMode ? 'fa-sun' : 'fa-moon'}`} />
-          </button>
-          {/* زر تسجيل الخروج */}
-          <button onClick={handleLogout}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl transition-all text-xs font-bold border
-              ${isDarkMode ? 'bg-red-900/30 text-red-400 border-red-800/50 hover:bg-red-900/50' : 'bg-red-50 text-red-500 border-red-200 hover:bg-red-100'}`}
-            title="تسجيل الخروج">
-            <i className="fas fa-sign-out-alt text-[11px]" />
-            <span className="hidden sm:inline">خروج</span>
-          </button>
-        </div>
-      </div>
+      {/* ── مسافة تحت الهيدر الرئيسي ─────────────────────────────────── */}
+      <div className="pt-20" />
 
       {/* ── Tabs Bar ─────────────────────────────────────────────────────── */}
-      <div className={`border-b sticky top-[56px] z-30 backdrop-blur-md
-        ${isDarkMode ? 'bg-slate-900/90 border-slate-700/80' : 'bg-white/90 border-slate-200'}`}>
+      <div className={`border-b sticky top-0 z-20 backdrop-blur-md
+        ${dm ? 'bg-slate-900/90 border-slate-700/80' : 'bg-white/90 border-slate-200'}`}>
         <div className="max-w-[1400px] mx-auto px-6 flex gap-0.5 flex-wrap pt-1">
           {tabs.map((tab, idx) => (
             <button key={tab.key} onClick={() => handleTabChange(tab.key)}
               data-aos="fade-up" data-aos-delay={idx * 100}
               className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold border-b-2 -mb-px transition-all duration-150
                 ${activeTab === tab.key
-                  ? (isDarkMode ? 'text-cyan-400 border-cyan-400' : 'text-cyan-600 border-cyan-600')
-                  : (isDarkMode ? 'text-slate-500 border-transparent hover:text-cyan-400 hover:border-slate-600' : 'text-slate-400 border-transparent hover:text-cyan-600 hover:border-slate-200')}`}>
+                  ? (dm ? 'text-cyan-400 border-cyan-400' : 'text-cyan-600 border-cyan-600')
+                  : (dm ? 'text-slate-500 border-transparent hover:text-cyan-400 hover:border-slate-600' : 'text-slate-400 border-transparent hover:text-cyan-600 hover:border-slate-200')}`}>
               <i className={`fas ${tab.icon} text-[13px]`} />{tab.label}
             </button>
           ))}
@@ -942,12 +1015,12 @@ useEffect(() => {
 
       {/* ── CLIENT TAB ────────────────────────────────────────────────── */}
       {activeTab === 'client-requests' && (
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 space-y-5" data-aos="fade-up">
+      <div className="max-w-[1400px] mx-auto px-3 sm:px-6 py-6 space-y-5 overflow-x-hidden" data-aos="fade-up">
           <RequestsTable
             role="client"
             requests={clientRequests}
             loading={loadingStates.client}
-            isDarkMode={isDarkMode}
+            isDarkMode={dm}
             onRefresh={() => currentUser && loadClientRequests(currentUser.id)}
             showToast={showToast}
           />
@@ -956,12 +1029,12 @@ useEffect(() => {
 
       {/* ── EMPLOYEE TAB ──────────────────────────────────────────────── */}
       {activeTab === 'employee-tasks' && (
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 space-y-5" data-aos="fade-up">
+  <div className="max-w-[1400px] mx-auto px-3 sm:px-6 py-6 space-y-5 overflow-x-hidden" data-aos="fade-up">
           <RequestsTable
             role="employee"
             requests={empRequests}
             loading={loadingStates.emp}
-            isDarkMode={isDarkMode}
+            isDarkMode={dm}
             onRefresh={() => currentUser && loadEmpRequests(currentUser.id)}
             showToast={showToast}
           />
@@ -970,34 +1043,100 @@ useEffect(() => {
 
       {/* ── ADMIN REQUESTS TAB ────────────────────────────────────────── */}
       {activeTab === 'admin-requests' && (
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 space-y-5" data-aos="fade-up">
+  <div className="max-w-[1400px] mx-auto px-3 sm:px-6 py-6 space-y-5 overflow-x-hidden" data-aos="fade-up">
           <RequestsTable
             role="admin"
             requests={adminRequests.filter(r => !r.assigned_to)}
             loading={loadingStates.admin}
-            isDarkMode={isDarkMode}
+            isDarkMode={dm}
             onRefresh={() => { loadAdminRequests(); loadAdminStats(); }}
             showToast={showToast}
           />
 
           {/* ── جدول تتبع الموظفين ─────────────────────────────────────── */}
-          <div className={`rounded-2xl overflow-hidden shadow-sm border mt-8 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`px-6 py-4 border-b flex items-center gap-2.5 ${isDarkMode ? 'border-slate-700 bg-slate-800/80' : 'border-slate-100 bg-slate-50/60'}`}>
+          <div className={`rounded-2xl overflow-hidden shadow-sm border mt-8 ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+            <div className={`px-6 py-4 border-b flex items-center gap-2.5 ${dm ? 'border-slate-700 bg-slate-800/80' : 'border-slate-100 bg-slate-50/60'}`}>
               <i className="fas fa-user-clock text-violet-500 text-lg" />
-              <h2 className={`text-base font-extrabold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+              <h2 className={`text-base font-extrabold ${dm ? 'text-white' : 'text-slate-800'}`}>
                 متابعة الموظفين
               </h2>
-              <span className={`text-xs font-bold px-2.5 py-1 rounded-full ms-1 ${isDarkMode ? 'bg-violet-900/40 text-violet-400 border border-violet-700' : 'bg-violet-50 text-violet-700 border border-violet-200'}`}>
+              <span className={`text-xs font-bold px-2.5 py-1 rounded-full ms-1 ${dm ? 'bg-violet-900/40 text-violet-400 border border-violet-700' : 'bg-violet-50 text-violet-700 border border-violet-200'}`}>
                 {assignedRequests.length} طلب مسند
               </span>
-              <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-400'} ms-auto`}>
+              <span className={`text-xs ${dm ? 'text-slate-400' : 'text-slate-400'} ms-auto`}>
                 الطلبات التي تم إسنادها لموظفين
               </span>
             </div>
+
+            {/* ── شريط فلاتر جدول متابعة الموظفين ─────────────────────── */}
+            <div className={`px-5 py-3 border-b ${dm ? 'border-slate-700 bg-slate-800/40' : 'border-slate-100 bg-slate-50/40'}`}>
+              <div className="flex flex-wrap gap-2 items-center">
+                {/* فلتر الحالة */}
+                <div className="flex gap-1 flex-wrap">
+                  {[
+                    { v: 'all',            label: 'الكل',         count: assignedStats.total,          dot: 'bg-slate-400',   active: 'bg-slate-600 text-white border-slate-600'   },
+                    { v: 'pending_review', label: 'قيد المراجعة', count: assignedStats.pending_review, dot: 'bg-amber-400',   active: 'bg-amber-500 text-white border-amber-500'   },
+                    { v: 'in_progress',    label: 'قيد التنفيذ',  count: assignedStats.in_progress,    dot: 'bg-sky-400',     active: 'bg-sky-500 text-white border-sky-500'         },
+                    { v: 'completed',      label: 'مكتملة',        count: assignedStats.completed,      dot: 'bg-emerald-400', active: 'bg-emerald-500 text-white border-emerald-500' },
+                    { v: 'cancelled',      label: 'ملغاة',         count: assignedStats.cancelled,      dot: 'bg-red-400',     active: 'bg-red-500 text-white border-red-400'         },
+                  ].map(f => {
+                    const isActive = assignedStatusFilter === f.v;
+                    return (
+                      <button key={f.v} onClick={() => setAssignedStatusFilter(f.v)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all shadow-sm
+                          ${isActive
+                            ? `${f.active} shadow-sm`
+                            : (dm ? 'bg-slate-700/60 text-slate-400 border-slate-600 hover:border-slate-400 hover:text-slate-200' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700')}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? 'bg-white/80' : f.dot}`} />
+                        {f.label}
+                        <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full
+                          ${isActive ? 'bg-white/25 text-white' : (dm ? 'bg-slate-600 text-slate-300' : 'bg-slate-100 text-slate-500')}`}>
+                          {f.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* فاصل */}
+                <div className={`w-px h-6 ${dm ? 'bg-slate-600' : 'bg-slate-200'}`} />
+
+                {/* فلتر التاريخ */}
+                <div className={`flex items-center rounded-xl p-0.5 gap-0.5 ${dm ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                  {([
+                    { v: 'all',   l: 'الكل',     color: 'bg-slate-600 text-white'   },
+                    { v: 'today', l: 'اليوم',    color: 'bg-violet-600 text-white'  },
+                    { v: 'week',  l: 'الأسبوع', color: 'bg-violet-600 text-white'  },
+                    { v: 'month', l: 'الشهر',   color: 'bg-violet-600 text-white'  },
+                  ] as { v: DateFilter; l: string; color: string }[]).map(o => (
+                    <button key={o.v} onClick={() => setAssignedDateFilter(o.v)}
+                      className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all
+                        ${assignedDateFilter === o.v
+                          ? `${o.color} shadow-sm`
+                          : (dm ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700')}`}>
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
+
+                {/* مسح الفلاتر */}
+                {(assignedStatusFilter !== 'all' || assignedDateFilter !== 'all') && (
+                  <button onClick={() => { setAssignedStatusFilter('all'); setAssignedDateFilter('all'); }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold text-red-400 border border-red-200 hover:bg-red-50 transition-all">
+                    <i className="fas fa-times text-[9px]" /> مسح
+                  </button>
+                )}
+
+                <span className={`text-[11px] mr-auto font-semibold ${dm ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {filteredAssignedReqs.length} نتيجة
+                </span>
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className={isDarkMode ? 'bg-slate-700/80' : 'bg-gradient-to-l from-violet-700 to-violet-500'}>
+                  <tr className={dm ? 'bg-slate-700/80' : 'bg-gradient-to-l from-violet-700 to-violet-500'}>
                     {['#', 'اسم الخدمة', 'اسم العميل', 'اسم الموظف', 'الحالة', 'العقد', 'التاريخ'].map((h, i) => (
                       <th key={h} className={`px-4 py-3 text-right text-[11px] font-bold text-white/90 whitespace-nowrap tracking-wide
                         ${i === 0 ? 'rounded-tr-2xl w-10' : ''} ${i === 6 ? 'rounded-tl-2xl' : ''}`}>
@@ -1010,44 +1149,51 @@ useEffect(() => {
                   {loadingStates.admin ? (
                     <tr><td colSpan={7} className="text-center py-16">
                       <i className="fas fa-spinner fa-spin text-3xl text-violet-400 block mb-2" />
-                      <span className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>جاري التحميل...</span>
+                      <span className={`text-sm ${dm ? 'text-slate-400' : 'text-slate-400'}`}>جاري التحميل...</span>
                     </td></tr>
                   ) : assignedRequests.length === 0 ? (
                     <tr><td colSpan={7} className="text-center py-16">
                       <i className="fas fa-inbox text-5xl block mb-3 opacity-20 text-slate-300" />
-                      <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>لا توجد طلبات مسندة بعد</p>
+                      <p className={`text-sm font-semibold ${dm ? 'text-slate-400' : 'text-slate-400'}`}>لا توجد طلبات مسندة بعد</p>
                     </td></tr>
-                  ) : assignedRequests.map((r, idx) => {
+                  ) : filteredAssignedReqs.length === 0 ? (
+                    <tr><td colSpan={7} className="text-center py-16">
+                      <i className="fas fa-search text-5xl block mb-3 opacity-20 text-slate-300" />
+                      <p className={`text-sm font-semibold ${dm ? 'text-slate-400' : 'text-slate-400'}`}>لا توجد نتائج تطابق الفلتر</p>
+                      <button onClick={() => { setAssignedStatusFilter('all'); setAssignedDateFilter('all'); }}
+                        className="mt-2 text-xs text-violet-500 hover:underline">مسح الفلاتر</button>
+                    </td></tr>
+                  ) : filteredAssignedReqs.map((r, idx) => {
                     const isEven = idx % 2 === 0;
-                    const rowBg = isDarkMode
+                    const rowBg = dm
                       ? `border-slate-700/60 hover:bg-slate-700/40 ${!isEven ? 'bg-slate-800/30' : ''}`
                       : `border-slate-100 hover:bg-violet-50/20 ${!isEven ? 'bg-slate-50/50' : ''}`;
                     const emp = (r as any).employees || (r as any).employee;
                     const svc = (r as any).services || (r as any).service;
                     const statusCfg: Record<string, { label: string; pill: string; dot: string; icon: string }> = {
-                      pending_review: { label: 'قيد المراجعة', icon: 'fa-hourglass-half', pill: isDarkMode ? 'bg-amber-900/30 text-amber-400 border-amber-700' : 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-400' },
-                      in_progress:    { label: 'قيد التنفيذ',  icon: 'fa-cogs',           pill: isDarkMode ? 'bg-sky-900/30 text-sky-400 border-sky-700'   : 'bg-sky-50 text-sky-700 border-sky-300',     dot: 'bg-sky-400' },
-                      approved:       { label: 'قيد التنفيذ',  icon: 'fa-cogs',           pill: isDarkMode ? 'bg-sky-900/30 text-sky-400 border-sky-700'   : 'bg-sky-50 text-sky-700 border-sky-300',     dot: 'bg-sky-400' },
-                      completed:      { label: 'مكتمل',        icon: 'fa-flag-checkered', pill: isDarkMode ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700' : 'bg-emerald-50 text-emerald-700 border-emerald-300', dot: 'bg-emerald-500' },
-                      cancelled:      { label: 'ملغى',         icon: 'fa-ban',            pill: isDarkMode ? 'bg-red-900/30 text-red-400 border-red-700'   : 'bg-red-50 text-red-600 border-red-300',     dot: 'bg-red-400' },
-                      rejected:       { label: 'ملغى',         icon: 'fa-ban',            pill: isDarkMode ? 'bg-red-900/30 text-red-400 border-red-700'   : 'bg-red-50 text-red-600 border-red-300',     dot: 'bg-red-400' },
+                      pending_review: { label: 'قيد المراجعة', icon: 'fa-hourglass-half', pill: dm ? 'bg-amber-900/30 text-amber-400 border-amber-700' : 'bg-amber-50 text-amber-700 border-amber-300', dot: 'bg-amber-400' },
+                      in_progress:    { label: 'قيد التنفيذ',  icon: 'fa-cogs',           pill: dm ? 'bg-sky-900/30 text-sky-400 border-sky-700'   : 'bg-sky-50 text-sky-700 border-sky-300',     dot: 'bg-sky-400' },
+                      approved:       { label: 'قيد التنفيذ',  icon: 'fa-cogs',           pill: dm ? 'bg-sky-900/30 text-sky-400 border-sky-700'   : 'bg-sky-50 text-sky-700 border-sky-300',     dot: 'bg-sky-400' },
+                      completed:      { label: 'مكتمل',        icon: 'fa-flag-checkered', pill: dm ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700' : 'bg-emerald-50 text-emerald-700 border-emerald-300', dot: 'bg-emerald-500' },
+                      cancelled:      { label: 'ملغى',         icon: 'fa-ban',            pill: dm ? 'bg-red-900/30 text-red-400 border-red-700'   : 'bg-red-50 text-red-600 border-red-300',     dot: 'bg-red-400' },
+                      rejected:       { label: 'ملغى',         icon: 'fa-ban',            pill: dm ? 'bg-red-900/30 text-red-400 border-red-700'   : 'bg-red-50 text-red-600 border-red-300',     dot: 'bg-red-400' },
                     };
                     const sc = statusCfg[r.request_status] ?? statusCfg.pending_review;
                     return (
                       <tr key={r.request_id} className={`border-b transition-colors ${rowBg}`}>
-                        <td className={`px-4 py-3 text-center text-[11px] font-bold ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{idx + 1}</td>
-                        <td className={`px-4 py-3 text-sm font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                        <td className={`px-4 py-3 text-center text-[11px] font-bold ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{idx + 1}</td>
+                        <td className={`px-4 py-3 text-sm font-semibold ${dm ? 'text-white' : 'text-slate-800'}`}>
                           {svc?.service_name || '—'}
                         </td>
-                        <td className={`px-4 py-3 text-sm font-bold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+                        <td className={`px-4 py-3 text-sm font-bold ${dm ? 'text-slate-200' : 'text-slate-700'}`}>
                           {r.user?.association_name || '—'}
                         </td>
                         <td className="px-4 py-3">
                           {emp?.employee_name ? (
-                            <span className={`flex items-center gap-1.5 text-sm font-semibold ${isDarkMode ? 'text-violet-400' : 'text-violet-700'}`}>
+                            <span className={`flex items-center gap-1.5 text-sm font-semibold ${dm ? 'text-violet-400' : 'text-violet-700'}`}>
                               <i className="fas fa-user-tie text-[10px]" />{emp.employee_name}
                             </span>
-                          ) : <span className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>—</span>}
+                          ) : <span className={`text-xs ${dm ? 'text-slate-500' : 'text-slate-400'}`}>—</span>}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold border ${sc.pill}`}>
@@ -1064,14 +1210,14 @@ useEffect(() => {
                             <button
                               onClick={() => { setPdfUrl(r.contract_url!); setModals(m => ({ ...m, pdf: true })); }}
                               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all
-                                ${isDarkMode ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700 hover:bg-emerald-700 hover:text-white' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-600 hover:text-white'}`}>
+                                ${dm ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700 hover:bg-emerald-700 hover:text-white' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-600 hover:text-white'}`}>
                               <i className="fas fa-eye" /> عرض العقد
                             </button>
                           ) : (
-                            <span className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>لم يُرفع بعد</span>
+                            <span className={`text-xs ${dm ? 'text-slate-500' : 'text-slate-400'}`}>لم يُرفع بعد</span>
                           )}
                         </td>
-                        <td className={`px-4 py-3 text-xs whitespace-nowrap ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                        <td className={`px-4 py-3 text-xs whitespace-nowrap ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
                           {new Date(r.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' })}
                         </td>
                       </tr>
@@ -1081,11 +1227,11 @@ useEffect(() => {
               </table>
             </div>
             {assignedRequests.length > 0 && (
-              <div className={`px-5 py-2.5 border-t flex items-center justify-between ${isDarkMode ? 'border-slate-700 bg-slate-800/40' : 'border-slate-100 bg-slate-50/60'}`}>
-                <span className={`text-[11px] font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                  إجمالي الطلبات المسندة: <span className={`font-extrabold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{assignedRequests.length}</span>
+              <div className={`px-5 py-2.5 border-t flex items-center justify-between ${dm ? 'border-slate-700 bg-slate-800/40' : 'border-slate-100 bg-slate-50/60'}`}>
+                <span className={`text-[11px] font-semibold ${dm ? 'text-slate-400' : 'text-slate-500'}`}>
+                  عرض <span className={`font-extrabold ${dm ? 'text-white' : 'text-slate-800'}`}>{filteredAssignedReqs.length}</span> من أصل {assignedRequests.length} طلب مسند
                 </span>
-                <span className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                <span className={`text-[11px] ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
                   مكتمل: <span className="font-bold text-emerald-500">{assignedRequests.filter(r => r.request_status === 'completed').length}</span>
                   {' · '}
                   قيد التنفيذ: <span className="font-bold text-sky-500">{assignedRequests.filter(r => ['in_progress','approved'].includes(r.request_status)).length}</span>
@@ -1100,9 +1246,9 @@ useEffect(() => {
       {activeTab === 'employees' && (
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-6" data-aos="fade-up">
           <div className="flex justify-between items-center mb-6">
-            <h2 className={`text-lg font-extrabold flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+            <h2 className={`text-lg font-extrabold flex items-center gap-2 ${dm ? 'text-white' : 'text-slate-800'}`}>
               <i className="fas fa-users-cog text-cyan-600" />الموظفون
-              <span className={`text-sm font-normal ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>({employees.length})</span>
+              <span className={`text-sm font-normal ${dm ? 'text-slate-400' : 'text-slate-400'}`}>({employees.length})</span>
             </h2>
           </div>
 
@@ -1119,21 +1265,21 @@ useEffect(() => {
                 <div key={e.employee_id}
                   data-aos="fade-up" data-aos-delay={idx * 80}
                   className={`rounded-2xl p-6 shadow-sm border-r-4 flex flex-col gap-4 transition-all hover:shadow-md
-                    ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'}
+                    ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white'}
                     ${e.is_active ? 'border-cyan-500' : 'border-red-400 opacity-70'}`}>
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-full bg-gradient-to-br from-cyan-600 to-cyan-400 flex items-center justify-center text-white text-lg flex-shrink-0">
                       <i className="fas fa-user" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className={`font-extrabold text-base truncate ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{e.employee_name}</div>
-                      <div className={`text-xs flex items-center gap-1 mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>
+                      <div className={`font-extrabold text-base truncate ${dm ? 'text-white' : 'text-slate-800'}`}>{e.employee_name}</div>
+                      <div className={`text-xs flex items-center gap-1 mt-0.5 ${dm ? 'text-slate-400' : 'text-slate-400'}`}>
                         <i className="fas fa-user-tie text-cyan-500" /> موظف
                       </div>
                     </div>
                     {!e.is_active && <span className="text-xs font-bold px-2 py-1 rounded-full bg-red-50 text-red-500 flex-shrink-0">معطّل</span>}
                   </div>
-                  <div className={`text-sm space-y-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <div className={`text-sm space-y-1.5 ${dm ? 'text-slate-400' : 'text-slate-500'}`}>
                     <div className="flex items-center gap-2"><i className="fas fa-envelope text-cyan-500 w-4" />{e.employee_email}</div>
                     {e.employee_phone && <div className="flex items-center gap-2"><i className="fas fa-phone text-cyan-500 w-4" />{e.employee_phone}</div>}
                   </div>
@@ -1171,21 +1317,21 @@ useEffect(() => {
 
       {/* Reject Modal */}
       {modals.reject && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-5"
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
           onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, reject: false }))}>
-          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-extrabold flex items-center gap-2 text-base ${isDarkMode ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-times-circle text-red-500" />رفض الطلب</h3>
-              <button onClick={() => setModals(m => ({ ...m, reject: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-times-circle text-red-500" />رفض الطلب</h3>
+              <button onClick={() => setModals(m => ({ ...m, reject: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5">
-              <label className={`block mb-2 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>سبب الرفض (ستظهر للعميل)</label>
+              <label className={`block mb-2 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>سبب الرفض (ستظهر للعميل)</label>
               <textarea className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-red-500 focus:ring-red-900/30' : 'border-slate-200 focus:border-red-400 focus:ring-red-100'}`}
+                ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-red-500 focus:ring-red-900/30' : 'border-slate-200 focus:border-red-400 focus:ring-red-100'}`}
                 rows={4} placeholder="اكتب سبب الرفض..." value={rejectNotes} onChange={e => setRejectNotes(e.target.value)} />
             </div>
-            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setModals(m => ({ ...m, reject: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
+            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={() => setModals(m => ({ ...m, reject: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${dm ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
               <button onClick={handleReject} className="px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
                 <i className="fas fa-times" /> تأكيد الرفض
               </button>
@@ -1196,12 +1342,12 @@ useEffect(() => {
 
       {/* Assign Modal */}
       {modals.assign && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-5"
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
           onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, assign: false }))}>
-          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-extrabold flex items-center gap-2 text-base ${isDarkMode ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-user-check text-violet-500" />إسناد موظف</h3>
-              <button onClick={() => setModals(m => ({ ...m, assign: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-user-check text-violet-500" />إسناد موظف</h3>
+              <button onClick={() => setModals(m => ({ ...m, assign: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-3">
               {activeEmployees.map(emp => (
@@ -1209,21 +1355,21 @@ useEffect(() => {
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-right
                     ${selectedEmployee === emp.employee_id
                       ? 'bg-violet-50 border-violet-300 shadow-sm'
-                      : (isDarkMode ? 'bg-slate-700 border-slate-600 hover:border-slate-500' : 'bg-slate-50 border-slate-200 hover:border-violet-200')}`}>
+                      : (dm ? 'bg-slate-700 border-slate-600 hover:border-slate-500' : 'bg-slate-50 border-slate-200 hover:border-violet-200')}`}>
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm flex-shrink-0
                     ${selectedEmployee === emp.employee_id ? 'bg-violet-500' : 'bg-slate-400'}`}>
                     <i className="fas fa-user" />
                   </div>
                   <div className="flex-1">
-                    <div className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{emp.employee_name}</div>
-                    <div className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>{emp.employee_email}</div>
+                    <div className={`font-bold text-sm ${dm ? 'text-white' : 'text-slate-800'}`}>{emp.employee_name}</div>
+                    <div className={`text-xs ${dm ? 'text-slate-400' : 'text-slate-400'}`}>{emp.employee_email}</div>
                   </div>
                   {selectedEmployee === emp.employee_id && <i className="fas fa-check-circle text-violet-500" />}
                 </button>
               ))}
             </div>
-            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setModals(m => ({ ...m, assign: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
+            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={() => setModals(m => ({ ...m, assign: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${dm ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
               <button onClick={handleAssign} disabled={!selectedEmployee} className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
                 <i className="fas fa-check" /> تأكيد الإسناد
               </button>
@@ -1234,33 +1380,33 @@ useEffect(() => {
 
       {/* Update Status Modal */}
       {modals.updateStatus && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-5"
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
           onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, updateStatus: false }))}>
-          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-extrabold flex items-center gap-2 text-base ${isDarkMode ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-exchange-alt text-sky-500" />تحديث الحالة</h3>
-              <button onClick={() => setModals(m => ({ ...m, updateStatus: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-exchange-alt text-sky-500" />تحديث الحالة</h3>
+              <button onClick={() => setModals(m => ({ ...m, updateStatus: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
               <div>
-                <label className={`block mb-2 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>الحالة الجديدة</label>
+                <label className={`block mb-2 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>الحالة الجديدة</label>
                 <select value={newStatus} onChange={e => setNewStatus(e.target.value)}
                   className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                    ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white focus:border-sky-500 focus:ring-sky-900/30' : 'border-slate-200 focus:border-sky-400 focus:ring-sky-100'}`}>
+                    ${dm ? 'bg-slate-700 border-slate-600 text-white focus:border-sky-500 focus:ring-sky-900/30' : 'border-slate-200 focus:border-sky-400 focus:ring-sky-100'}`}>
                   <option value="in_progress">قيد التنفيذ</option>
                   <option value="completed">مكتمل</option>
                   <option value="cancelled">ملغي</option>
                 </select>
               </div>
               <div>
-                <label className={`block mb-2 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات (اختياري)</label>
+                <label className={`block mb-2 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات (اختياري)</label>
                 <textarea className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                  ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-sky-500 focus:ring-sky-900/30' : 'border-slate-200 focus:border-sky-400 focus:ring-sky-100'}`}
+                  ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-sky-500 focus:ring-sky-900/30' : 'border-slate-200 focus:border-sky-400 focus:ring-sky-100'}`}
                   rows={3} placeholder="اكتب ملاحظاتك..." value={empNote} onChange={e => setEmpNote(e.target.value)} />
               </div>
             </div>
-            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setModals(m => ({ ...m, updateStatus: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
+            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={() => setModals(m => ({ ...m, updateStatus: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${dm ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
               <button onClick={handleUpdateStatus} className="px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
                 <i className="fas fa-check" /> تحديث
               </button>
@@ -1271,7 +1417,7 @@ useEffect(() => {
 
       {/* PDF Viewer Modal */}
       {modals.pdf && pdfUrl && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[1000] flex items-center justify-center p-5"
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
           onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, pdf: false }))}>
           <div className="bg-white rounded-2xl w-full max-w-4xl h-[80vh] shadow-2xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
@@ -1292,12 +1438,12 @@ useEffect(() => {
 
       {/* Add Employee Modal */}
       {modals.addEmp && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-5"
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
           onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, addEmp: false }))}>
-          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-extrabold flex items-center gap-2 text-base ${isDarkMode ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-user-plus text-cyan-500" />إضافة موظف جديد</h3>
-              <button onClick={() => setModals(m => ({ ...m, addEmp: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-user-plus text-cyan-500" />إضافة موظف جديد</h3>
+              <button onClick={() => setModals(m => ({ ...m, addEmp: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
               {[
@@ -1307,7 +1453,7 @@ useEffect(() => {
                 { key: 'password', label: 'كلمة المرور *', icon: 'fa-lock', type: 'password', placeholder: '8 أحرف على الأقل' },
               ].map(field => (
                 <div key={field.key}>
-                  <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{field.label}</label>
+                  <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{field.label}</label>
                   <div className="relative">
                     <i className={`fas ${field.icon} absolute right-3.5 top-1/2 -translate-y-1/2 text-xs text-slate-400`} />
                     <input
@@ -1324,14 +1470,14 @@ useEffect(() => {
                     onKeyPress={field.key === 'phone' ? (e) => { if (!/[0-9]/.test(e.key)) e.preventDefault(); } : undefined}
                       placeholder={field.placeholder}
                       className={`w-full pr-10 pl-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                        ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-cyan-900/30' : 'border-slate-200 focus:border-cyan-400 focus:ring-cyan-100'}`}
+                        ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-cyan-900/30' : 'border-slate-200 focus:border-cyan-400 focus:ring-cyan-100'}`}
                     />
                   </div>
                 </div>
               ))}
             </div>
-            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setModals(m => ({ ...m, addEmp: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
+            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={() => setModals(m => ({ ...m, addEmp: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${dm ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
               <button onClick={handleCreateEmployee} disabled={empFormLoading} className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
                 {empFormLoading ? <i className="fas fa-spinner fa-spin" /> : <i className="fas fa-plus" />}
                 إنشاء الحساب
@@ -1343,29 +1489,29 @@ useEffect(() => {
 
       {/* New Request Modal */}
       {modals.newRequest && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-5"
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
           onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, newRequest: false }))}>
-          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-extrabold flex items-center gap-2 text-base ${isDarkMode ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-plus-circle text-cyan-500" />طلب خدمة جديدة</h3>
-              <button onClick={() => setModals(m => ({ ...m, newRequest: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-plus-circle text-cyan-500" />طلب خدمة جديدة</h3>
+              <button onClick={() => setModals(m => ({ ...m, newRequest: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
               <div>
-                <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>اسم الخدمة *</label>
+                <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>اسم الخدمة *</label>
                 <input type="text" value={requestForm.serviceName} onChange={e => setRequestForm(f => ({ ...f, serviceName: e.target.value }))}
                   placeholder="مثل: استشارة قانونية" className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                    ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-cyan-900/30' : 'border-slate-200 focus:border-cyan-400 focus:ring-cyan-100'}`} />
+                    ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-cyan-900/30' : 'border-slate-200 focus:border-cyan-400 focus:ring-cyan-100'}`} />
               </div>
               <div>
-                <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات (اختياري)</label>
+                <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات (اختياري)</label>
                 <textarea value={requestForm.notes} onChange={e => setRequestForm(f => ({ ...f, notes: e.target.value }))}
                   placeholder="أي تفاصيل إضافية..." rows={3} className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                    ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-cyan-900/30' : 'border-slate-200 focus:border-cyan-400 focus:ring-cyan-100'}`} />
+                    ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-cyan-500 focus:ring-cyan-900/30' : 'border-slate-200 focus:border-cyan-400 focus:ring-cyan-100'}`} />
               </div>
             </div>
-            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setModals(m => ({ ...m, newRequest: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
+            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={() => setModals(m => ({ ...m, newRequest: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${dm ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
               <button onClick={handleSubmitRequest} disabled={requestFormLoading} className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
                 {requestFormLoading ? <i className="fas fa-spinner fa-spin" /> : <i className="fas fa-paper-plane" />}
                 إرسال الطلب
@@ -1377,38 +1523,98 @@ useEffect(() => {
 
       {/* Add News Modal */}
       {modals.news && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-5"
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
           onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, news: false }))}>
-          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border max-h-[90vh] overflow-y-auto ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b sticky top-0 z-10 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-white'}`}>
-              <h3 className={`font-extrabold flex items-center gap-2 text-base ${isDarkMode ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-bullhorn text-orange-500" />نشر خبر جديد</h3>
-              <button onClick={() => setModals(m => ({ ...m, news: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+         <div className={`rounded-2xl w-full max-w-lg shadow-2xl border max-h-[min(92vh,calc(100dvh-32px))] overflow-y-auto mx-2 sm:mx-0 ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
+            <div className={`flex items-center justify-between px-6 py-4 border-b sticky top-0 z-10 ${dm ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-white'}`}>
+              <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-bullhorn text-orange-500" />نشر خبر جديد</h3>
+              <button onClick={() => setModals(m => ({ ...m, news: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
+             <div>
+  <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>
+    صورة الخبر (اختياري)
+  </label>
+  <input
+    ref={newsImageRef}
+    type="file"
+    accept="image/*"
+    className="hidden"
+    onChange={handleNewsImageUpload}
+  />
+  {newsForm.image ? (
+    <div className="space-y-2">
+      <img
+        src={newsForm.image}
+        alt="معاينة الصورة"
+        className="w-full h-32 object-cover rounded-xl border-2 border-orange-200"
+      />
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => newsImageRef.current?.click()}
+          disabled={newsImageUploading}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border-2 border-dashed transition-all
+            ${dm
+              ? 'border-slate-600 text-slate-400 hover:border-orange-500 hover:text-orange-400'
+              : 'border-slate-200 text-slate-500 hover:border-orange-400 hover:text-orange-500 hover:bg-orange-50'}`}
+        >
+          <i className="fas fa-redo text-xs" /> تغيير الصورة
+        </button>
+        <button
+          type="button"
+          onClick={() => setNewsForm(f => ({ ...f, image: '' }))}
+          className="px-3 py-2.5 rounded-xl text-sm font-bold bg-red-50 text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-all"
+        >
+          <i className="fas fa-trash text-xs" />
+        </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => newsImageRef.current?.click()}
+            disabled={newsImageUploading}
+            className={`w-full flex flex-col items-center justify-center gap-2 px-4 py-6 rounded-xl border-2 border-dashed transition-all
+              ${newsImageUploading
+                ? 'border-orange-300 bg-orange-50/30 cursor-wait'
+                : dm
+                  ? 'border-slate-600 text-slate-400 hover:border-orange-500 hover:text-orange-400 hover:bg-orange-900/10'
+                  : 'border-slate-200 text-slate-400 hover:border-orange-400 hover:text-orange-500 hover:bg-orange-50'}`}
+          >
+            {newsImageUploading ? (
+              <>
+                <i className="fas fa-spinner fa-spin text-xl text-orange-400" />
+                <span className="text-xs font-bold">جاري الرفع...</span>
+              </>
+            ) : (
+              <>
+                <i className="fas fa-cloud-upload-alt text-2xl" />
+                <span className="text-xs font-bold">اضغط لرفع صورة</span>
+                <span className="text-[10px] opacity-60">PNG, JPG, WEBP — حد أقصى 5MB</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
               <div>
-                <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>عنوان الخبر *</label>
+                <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>عنوان الخبر *</label>
                 <input type="text" value={newsForm.title} onChange={e => setNewsForm(f => ({ ...f, title: e.target.value }))}
-                  placeholder="عنوان الخبر..." className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                    ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
+                  placeholder="اكتب عنوان الخبر..." className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
+                    ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
               </div>
               <div>
-                <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>المحتوى *</label>
+                <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>المحتوى *</label>
                 <textarea value={newsForm.excerpt} onChange={e => setNewsForm(f => ({ ...f, excerpt: e.target.value }))}
                   placeholder="محتوى الخبر..." rows={4} className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                    ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
+                    ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
               </div>
-              <div>
-                <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>رابط الصورة (اختياري)</label>
-                <input type="url" value={newsForm.image} onChange={e => setNewsForm(f => ({ ...f, image: e.target.value }))}
-                  placeholder="https://..." className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                    ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>التصنيف</label>
+                  <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>التصنيف</label>
                   <select value={newsForm.category} onChange={e => setNewsForm(f => ({ ...f, category: e.target.value }))}
                     className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                      ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`}>
+                      ${dm ? 'bg-slate-700 border-slate-600 text-white focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`}>
                     <option value="عام">عام</option>
                     <option value="إعلان">إعلان</option>
                     <option value="تحديث">تحديث</option>
@@ -1416,15 +1622,21 @@ useEffect(() => {
                   </select>
                 </div>
                 <div>
-                  <label className={`block mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>التاريخ</label>
+                  <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>التاريخ</label>
                   <input type="date" value={newsForm.date} onChange={e => setNewsForm(f => ({ ...f, date: e.target.value }))}
                     className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                      ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
+                      ${dm ? 'bg-slate-700 border-slate-600 text-white focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
                 </div>
               </div>
+              <div>
+                <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>رابط (اختياري)</label>
+                <input type="url" value={newsForm.tweet} onChange={e => setNewsForm(f => ({ ...f, tweet: e.target.value }))}
+                  placeholder="https://... (رابط تغريدة أو صفحة)" className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
+                    ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
+              </div>
             </div>
-            <div className={`px-6 py-4 border-t flex gap-3 justify-end sticky bottom-0 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-white'}`}>
-              <button onClick={() => setModals(m => ({ ...m, news: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${isDarkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
+            <div className={`px-6 py-4 border-t flex gap-3 justify-end sticky bottom-0 ${dm ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-white'}`}>
+              <button onClick={() => setModals(m => ({ ...m, news: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${dm ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
               <button onClick={handleAddNews} disabled={newsFormLoading} className="px-5 py-2.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
                 {newsFormLoading ? <i className="fas fa-spinner fa-spin" /> : <i className="fas fa-bullhorn" />}
                 نشر الخبر
@@ -1433,7 +1645,6 @@ useEffect(() => {
           </div>
         </div>
       )}
-    </div>{/* end relative z-10 content wrapper */}
     </div>
   );
 }

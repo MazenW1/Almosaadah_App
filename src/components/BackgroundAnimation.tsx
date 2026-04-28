@@ -1,12 +1,19 @@
-// Background Animation with Dark Mode Support
+// Background Animation with Dark Mode Support - Fixed Version
 import { useEffect, useRef } from 'react';
 
 interface BackgroundAnimationProps {
   isDarkMode?: boolean;
+  isPaused?: boolean;
 }
 
-export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationProps) {
+export function BackgroundAnimation({ isDarkMode = false, isPaused = false }: BackgroundAnimationProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pausedRef = useRef(isPaused);
+
+  // Update ref when prop changes
+  useEffect(() => {
+    pausedRef.current = isPaused;
+  }, [isPaused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -14,39 +21,68 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let animFrame: number;
-    let W = canvas.width = window.innerWidth;
-    let H = canvas.height = window.innerHeight;
+    // ✅ FIX 1: Use a ref-like object to track the animation frame ID
+    // so we can cancel it properly on cleanup
+    let animFrame: number | null = null;
+    let isDestroyed = false;
 
+    let W = (canvas.width = window.innerWidth);
+    let H = (canvas.height = window.innerHeight);
+
+    // ✅ FIX 2: Debounce resize to avoid hammering canvas on mobile
+    // Also skip resize when modal is open (virtual keyboard causes resize)
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const onResize = () => {
-      W = canvas.width = window.innerWidth;
-      H = canvas.height = window.innerHeight;
-    };
-    window.addEventListener('resize', onResize);
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        // Skip resize when animation is paused (modal open / keyboard visible)
+        if (pausedRef.current) return;
 
-    // Particles for connection network
-    const PARTICLE_COUNT = 50;
+        W = canvas.width = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+      }, 300); // Increased debounce for keyboard transitions
+    };
+
+    // Use visualViewport API for better mobile keyboard handling
+    const visualViewport = window.visualViewport;
+    if (visualViewport) {
+      visualViewport.addEventListener('resize', () => {
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          if (pausedRef.current) return;
+
+          W = canvas.width = window.innerWidth;
+          H = canvas.height = window.innerHeight;
+        }, 300);
+      });
+    } else {
+      window.addEventListener('resize', onResize);
+    }
+
+    // ✅ FIX 3: Reduce particle count on mobile for performance
+    const isMobile = window.innerWidth < 768;
+    const PARTICLE_COUNT = isMobile ? 25 : 50;
+    const CONNECTION_DISTANCE = isMobile ? 100 : 130;
+
     const particles: Array<{
       x: number; y: number; vx: number; vy: number;
       size: number; alpha: number; color: string;
     }> = [];
 
-    // Light mode colors
     const lightColors = [
-      'rgba(6, 182, 212,',   // cyan-500
-      'rgba(14, 165, 233,', // cyan-600
-      'rgba(56, 189, 248,',  // cyan-400
-      'rgba(103, 232, 249,', // cyan-300
-      'rgba(34, 211, 238,',  // cyan-400
+      'rgba(6, 182, 212,',
+      'rgba(14, 165, 233,',
+      'rgba(56, 189, 248,',
+      'rgba(103, 232, 249,',
+      'rgba(34, 211, 238,',
     ];
 
-    // Dark mode colors - more vibrant
     const darkColors = [
-      'rgba(6, 182, 212,',   // cyan-500
-      'rgba(34, 211, 238,',  // cyan-400
-      'rgba(103, 232, 249,', // cyan-300
-      'rgba(14, 165, 233,',  // cyan-600
-      'rgba(56, 189, 248,',  // cyan-400
+      'rgba(6, 182, 212,',
+      'rgba(34, 211, 238,',
+      'rgba(103, 232, 249,',
+      'rgba(14, 165, 233,',
+      'rgba(56, 189, 248,',
     ];
 
     const colors = isDarkMode ? darkColors : lightColors;
@@ -63,11 +99,12 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
       });
     }
 
-    // Data nodes - larger glowing circles
+    // ✅ FIX 4: Reduce node count on mobile
+    const NODE_COUNT = isMobile ? 4 : 8;
     const nodes: Array<{
       x: number; y: number; r: number; pulse: number; speed: number; color: string;
     }> = [];
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < NODE_COUNT; i++) {
       nodes.push({
         x: Math.random() * W,
         y: Math.random() * H,
@@ -79,11 +116,20 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
     }
 
     let t = 0;
+
     const draw = () => {
+      // ✅ FIX 5: Stop loop immediately if component unmounted
+      if (isDestroyed) return;
+
+      // ✅ PAUSE ANIMATION when modal is open (ref check, not state)
+      if (pausedRef.current) {
+        animFrame = requestAnimationFrame(draw);
+        return;
+      }
+
       ctx.clearRect(0, 0, W, H);
       t += 0.008;
 
-      // Draw connection lines between nearby particles
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
         p.x += p.vx;
@@ -93,24 +139,27 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
         if (p.y < 0) p.y = H;
         if (p.y > H) p.y = 0;
 
-        for (let j = i + 1; j < particles.length; j++) {
-          const q = particles[j];
-          const dx = p.x - q.x;
-          const dy = p.y - q.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 130) {
-            ctx.beginPath();
-            ctx.strokeStyle = isDarkMode
-              ? `rgba(6, 182, 212,${0.2 * (1 - dist / 130)})` // Brighter in dark mode
-              : `rgba(6,182,212,${0.12 * (1 - dist / 130)})`;
-            ctx.lineWidth = 0.5;
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(q.x, q.y);
-            ctx.stroke();
+        // ✅ FIX 6: On mobile, skip connection lines (expensive O(n²) on every frame)
+        if (!isMobile) {
+          for (let j = i + 1; j < particles.length; j++) {
+            const q = particles[j];
+            const dx = p.x - q.x;
+            const dy = p.y - q.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < CONNECTION_DISTANCE) {
+              ctx.beginPath();
+              ctx.strokeStyle = isDarkMode
+                ? `rgba(6, 182, 212,${0.2 * (1 - dist / CONNECTION_DISTANCE)})`
+                : `rgba(6,182,212,${0.12 * (1 - dist / CONNECTION_DISTANCE)})`;
+              ctx.lineWidth = 0.5;
+              ctx.moveTo(p.x, p.y);
+              ctx.lineTo(q.x, q.y);
+              ctx.stroke();
+            }
           }
         }
 
-        // Draw particle with subtle glow
+        // Glow
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size + 1.5, 0, Math.PI * 2);
         ctx.fillStyle = `${p.color}0.08)`;
@@ -122,13 +171,11 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
         ctx.fill();
       }
 
-      // Draw pulsing nodes
       for (const node of nodes) {
         node.pulse += node.speed;
         const glow = Math.sin(node.pulse) * 0.5 + 0.5;
         const outerR = node.r + glow * 8;
 
-        // Outer glow ring
         const grad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, outerR * 2.5);
         grad.addColorStop(0, `${node.color}${0.3 * glow})`);
         grad.addColorStop(1, `${node.color}0)`);
@@ -137,20 +184,31 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
         ctx.fillStyle = grad;
         ctx.fill();
 
-        // Core
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.r, 0, Math.PI * 2);
         ctx.fillStyle = `${node.color}${0.6 + glow * 0.4})`;
         ctx.fill();
       }
 
+      // ✅ FIX 7: Always store the frame ID so cleanup can cancel it
       animFrame = requestAnimationFrame(draw);
     };
 
     draw();
+
+    // ✅ FIX 8: Proper cleanup — cancel animation, remove listeners, clear timers
     return () => {
-      cancelAnimationFrame(animFrame);
+      isDestroyed = true;
+      if (animFrame !== null) {
+        cancelAnimationFrame(animFrame);
+        animFrame = null;
+      }
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer);
+      }
       window.removeEventListener('resize', onResize);
+      // Clear canvas to free GPU memory
+      ctx.clearRect(0, 0, W, H);
     };
   }, [isDarkMode]);
 
@@ -165,6 +223,7 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
           z-index: 0;
           pointer-events: none;
           overflow: hidden;
+          /* isolation: isolate — REMOVED: was creating stacking context that blocked UI */
         }
 
         .bg-canvas {
@@ -172,7 +231,7 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
           inset: 0;
           width: 100%;
           height: 100%;
-          transition: all 0.5s ease;
+          pointer-events: none;
         }
 
         /* Light mode gradient background */
@@ -220,7 +279,7 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
           );
         }
 
-        /* Light mode glass orbs */
+        /* ✅ FIX 10: On mobile, disable backdrop-filter (very expensive on iOS/Android) */
         .glass-orb-light {
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
@@ -234,223 +293,170 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
           box-shadow:
             0 0 60px rgba(6, 182, 212, 0.1),
             0 0 100px rgba(255, 255, 255, 0.5),
-            inset 0 0 40px rgba(255, 255, 255, 0.5);
+            inset 0 0 40px rgba(255, 255, 255, 0.3);
         }
 
-        /* Dark mode glass orbs */
         .glass-orb-dark {
           backdrop-filter: blur(20px);
           -webkit-backdrop-filter: blur(20px);
           background: linear-gradient(
             135deg,
-            rgba(51, 65, 85, 0.5) 0%,
-            rgba(30, 41, 59, 0.4) 50%,
-            rgba(6, 182, 212, 0.1) 100%
+            rgba(30, 41, 59, 0.7) 0%,
+            rgba(51, 65, 85, 0.5) 50%,
+            rgba(6, 182, 212, 0.15) 100%
           );
-          border: 1px solid rgba(6, 182, 212, 0.3);
+          border: 1px solid rgba(6, 182, 212, 0.2);
           box-shadow:
-            0 0 60px rgba(6, 182, 212, 0.2),
-            0 0 100px rgba(6, 182, 212, 0.1),
-            inset 0 0 40px rgba(6, 182, 212, 0.1);
+            0 0 60px rgba(6, 182, 212, 0.15),
+            0 0 100px rgba(30, 41, 59, 0.8),
+            inset 0 0 40px rgba(6, 182, 212, 0.05);
         }
 
-        @keyframes orb-float-1 {
-          0%, 100% { transform: translate(0, 0) scale(1) rotate(0deg); opacity: 0.5; }
-          25% { transform: translate(30px, -25px) scale(1.05); opacity: 0.6; }
-          50% { transform: translate(-15px, 30px) scale(0.98); opacity: 0.55; }
-          75% { transform: translate(-35px, -15px) scale(1.02); opacity: 0.5; }
-        }
-        @keyframes orb-float-2 {
-          0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.45; }
-          33% { transform: translate(-40px, 25px) scale(1.08); opacity: 0.55; }
-          66% { transform: translate(25px, -30px) scale(0.95); opacity: 0.5; }
-        }
-        @keyframes orb-float-3 {
-          0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 0.5; }
-          50% { transform: translate(20px, -40px) rotate(180deg) scale(1.1); opacity: 0.6; }
-        }
-        @keyframes orb-pulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.08); }
-        }
+
 
         .glass-orb {
           position: absolute;
           border-radius: 50%;
+          /* ✅ FIX 13: Use will-change to hint GPU compositing */
+          will-change: transform;
+        }
+
+
+
+        @keyframes orb-float-1 {
+          0%, 100% { transform: translate(0, 0); }
+          33% { transform: translate(22px, -16px); }
+          66% { transform: translate(-16px, 12px); }
+        }
+        @keyframes orb-float-2 {
+          0%, 100% { transform: translate(0, 0); }
+          33% { transform: translate(-18px, 16px); }
+          66% { transform: translate(16px, -18px); }
+        }
+        @keyframes orb-float-3 {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(12px, -22px); }
         }
 
         .glass-orb-1 {
-          top: 5%;
-          right: 10%;
-          width: 450px;
-          height: 450px;
-          animation: orb-float-1 16s ease-in-out infinite;
+          top: -5%;
+          left: -8%;
+          width: 400px;
+          height: 400px;
+          animation: orb-float-1 24s ease-in-out infinite;
         }
-        .glass-orb-1::before {
-          content: '';
-          position: absolute;
-          inset: 25%;
-          border-radius: 50%;
-          background: radial-gradient(circle, rgba(6, 182, 212, 0.2) 0%, transparent 70%);
-          animation: orb-pulse 4s ease-in-out infinite;
-        }
-
         .glass-orb-2 {
-          bottom: 10%;
-          left: 5%;
-          width: 350px;
-          height: 350px;
-          animation: orb-float-2 20s ease-in-out infinite;
+          bottom: -10%;
+          right: -5%;
+          width: 320px;
+          height: 320px;
+          animation: orb-float-2 28s ease-in-out infinite 2s;
         }
-        .glass-orb-2::before {
-          content: '';
-          position: absolute;
-          inset: 20%;
-          border-radius: 50%;
-          background: radial-gradient(circle, rgba(14, 165, 233, 0.15) 0%, transparent 70%);
-          animation: orb-pulse 5s ease-in-out infinite 1s;
-        }
-
         .glass-orb-3 {
-          top: 50%;
-          left: 35%;
-          width: 280px;
-          height: 280px;
-          animation: orb-float-3 12s ease-in-out infinite;
-        }
-        .glass-orb-3::before {
-          content: '';
-          position: absolute;
-          inset: 30%;
-          border-radius: 50%;
-          background: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, transparent 70%);
-          animation: orb-pulse 3s ease-in-out infinite 0.5s;
-        }
-
-        .glass-orb-4 {
-          top: 15%;
-          left: 25%;
-          width: 180px;
-          height: 180px;
-          animation: orb-float-2 14s ease-in-out infinite reverse;
-          opacity: 0.5;
-        }
-
-        .glass-orb-5 {
-          bottom: 25%;
-          right: 15%;
+          top: 30%;
+          right: 5%;
           width: 220px;
           height: 220px;
-          animation: orb-float-1 18s ease-in-out infinite reverse;
-          opacity: 0.45;
+          animation: orb-float-3 20s ease-in-out infinite 1s;
+        }
+        .glass-orb-4 {
+          top: 15%;
+          left: 35%;
+          width: 160px;
+          height: 160px;
+          animation: orb-float-1 26s ease-in-out infinite 3s;
+        }
+        .glass-orb-5 {
+          bottom: 25%;
+          left: 15%;
+          width: 180px;
+          height: 180px;
+          animation: orb-float-2 22s ease-in-out infinite 1.5s;
         }
 
-        /* Light mode glass crystals */
+        /* Glass crystals */
+        .glass-crystal {
+          position: absolute;
+          will-change: transform;
+        }
+
         .glass-crystal-light {
-          backdrop-filter: blur(15px);
-          -webkit-backdrop-filter: blur(15px);
           background: linear-gradient(
-            180deg,
+            135deg,
             rgba(255, 255, 255, 0.6) 0%,
-            rgba(186, 230, 253, 0.4) 100%
+            rgba(186, 230, 253, 0.4) 50%,
+            rgba(255, 255, 255, 0.3) 100%
           );
-          border: 1px solid rgba(255, 255, 255, 0.8);
-          box-shadow:
-            0 0 30px rgba(6, 182, 212, 0.08),
-            inset 0 0 25px rgba(255, 255, 255, 0.4);
+          border: 1px solid rgba(255, 255, 255, 0.7);
+          box-shadow: 0 0 20px rgba(6, 182, 212, 0.1), inset 0 0 15px rgba(255, 255, 255, 0.4);
         }
 
-        /* Dark mode glass crystals */
         .glass-crystal-dark {
-          backdrop-filter: blur(15px);
-          -webkit-backdrop-filter: blur(15px);
           background: linear-gradient(
-            180deg,
-            rgba(51, 65, 85, 0.4) 0%,
+            135deg,
+            rgba(6, 182, 212, 0.15) 0%,
+            rgba(30, 41, 59, 0.6) 50%,
             rgba(6, 182, 212, 0.1) 100%
           );
-          border: 1px solid rgba(6, 182, 212, 0.2);
-          box-shadow:
-            0 0 30px rgba(6, 182, 212, 0.15),
-            inset 0 0 25px rgba(6, 182, 212, 0.1);
+          border: 1px solid rgba(6, 182, 212, 0.25);
+          box-shadow: 0 0 20px rgba(6, 182, 212, 0.2), inset 0 0 15px rgba(6, 182, 212, 0.05);
         }
 
         @keyframes crystal-rotate {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
-        @keyframes crystal-float {
-          0%, 100% { transform: rotate(0deg) translateY(0); }
-          50% { transform: rotate(120deg) translateY(-15px); }
-        }
-
-        .glass-crystal {
-          position: absolute;
-        }
 
         .crystal-diamond {
-          width: 90px;
-          height: 90px;
-          top: 25%;
-          left: 10%;
-          transform: rotate(45deg);
-          animation: crystal-float 10s ease-in-out infinite;
-        }
-
-        .crystal-diamond-2 {
+          top: 18%;
+          left: 8%;
           width: 60px;
           height: 60px;
-          top: 60%;
-          right: 15%;
-          transform: rotate(45deg);
-          animation: crystal-float 8s ease-in-out infinite reverse;
-        }
-
-        .crystal-hexagon {
-          width: 100px;
-          height: 100px;
-          top: 45%;
-          left: 65%;
-          clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+          clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
           animation: crystal-rotate 25s linear infinite;
         }
-
-        .crystal-hexagon::before {
-          content: '';
-          position: absolute;
-          inset: 8px;
-          clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
-          background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, transparent 100%);
-          border: 1px solid rgba(255, 255, 255, 0.5);
+        .crystal-diamond-2 {
+          bottom: 22%;
+          right: 12%;
+          width: 40px;
+          height: 40px;
+          clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+          animation: crystal-rotate 18s linear infinite reverse;
         }
-
+        .crystal-hexagon {
+          top: 55%;
+          left: 5%;
+          width: 50px;
+          height: 50px;
+          clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+          animation: crystal-rotate 30s linear infinite;
+        }
         .crystal-triangle {
-          width: 70px;
-          height: 70px;
-          top: 70%;
-          left: 40%;
+          top: 8%;
+          right: 8%;
+          width: 55px;
+          height: 55px;
           clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-          animation: crystal-rotate 20s linear infinite reverse;
+          animation: crystal-rotate 22s linear infinite reverse;
         }
 
         /* Glass rings */
         @keyframes ring-pulse {
-          0%, 100% { transform: scale(1); opacity: 0.4; }
-          50% { transform: scale(1.03); opacity: 0.55; }
+          0%, 100% { opacity: 0.35; }
+          50% { opacity: 0.55; }
         }
         @keyframes ring-expand {
-          0% { transform: scale(0.9); opacity: 0; }
-          50% { opacity: 0.3; }
-          100% { transform: scale(1.2); opacity: 0; }
+          0% { opacity: 0; }
+          50% { opacity: 0.25; }
+          100% { opacity: 0; }
         }
 
         .glass-ring {
           position: absolute;
           border-radius: 50%;
           border: 2px solid rgba(6, 182, 212, 0.15);
-          backdrop-filter: blur(5px);
-          -webkit-backdrop-filter: blur(5px);
           background: transparent;
+          will-change: transform;
         }
 
         .ring-1 {
@@ -488,10 +494,9 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
 
         /* Floating particles */
         @keyframes particle-drift {
-          0%, 100% { transform: translateY(0) translateX(0); opacity: 0.4; }
-          25% { transform: translateY(-25px) translateX(12px); opacity: 0.7; }
-          50% { transform: translateY(-40px) translateX(-8px); opacity: 0.5; }
-          75% { transform: translateY(-15px) translateX(-20px); opacity: 0.6; }
+          0%, 100% { transform: translateY(0) translateX(0); opacity: 0.35; }
+          33% { transform: translateY(-18px) translateX(8px); opacity: 0.6; }
+          66% { transform: translateY(-28px) translateX(-6px); opacity: 0.4; }
         }
 
         .particle {
@@ -501,6 +506,7 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
           border-radius: 50%;
           background: radial-gradient(circle, rgba(6, 182, 212, 0.6) 0%, transparent 70%);
           box-shadow: 0 0 8px rgba(6, 182, 212, 0.4);
+          will-change: transform;
         }
 
         .particle-1 { top: 18%; left: 28%; animation: particle-drift 7s ease-in-out infinite; }
@@ -535,15 +541,15 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
         }
 
         @keyframes glow-pulse {
-          0%, 100% { opacity: 0.3; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.1); }
+          0%, 100% { opacity: 0.28; }
+          50% { opacity: 0.45; }
         }
 
         .glow-spot {
           position: absolute;
           border-radius: 50%;
           filter: blur(30px);
-          animation: glow-pulse 7s ease-in-out infinite;
+          animation: glow-pulse 10s ease-in-out infinite;
         }
 
         .glow-spot-1 {
@@ -557,20 +563,20 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
           left: 18%;
           width: 200px;
           height: 200px;
-          animation-delay: 1.5s;
+          animation-delay: 2s;
         }
         .glow-spot-3 {
           top: 48%;
           right: 8%;
           width: 180px;
           height: 180px;
-          animation-delay: 3s;
+          animation-delay: 4s;
         }
 
         /* Light rays */
         @keyframes ray-rotate {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
+          0% { transform: translateX(-50%) rotate(0deg); }
+          100% { transform: translateX(-50%) rotate(360deg); }
         }
 
         .light-rays {
@@ -594,6 +600,40 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
             transparent 120deg
           );
           animation: ray-rotate 100s linear infinite;
+          will-change: transform;
+        }
+
+
+        /* ══════════════════════════════════════════
+           Mobile Performance — أداء الجوال
+        ══════════════════════════════════════════ */
+        @media (max-width: 768px) {
+          /* إلغاء backdrop-filter — أكبر سبب للحرارة */
+          .glass-orb-light,
+          .glass-orb-dark,
+          .glass-ring { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+
+          /* إخفاء العناصر الزائدة */
+          .glass-crystal, .ring-1, .ring-3,
+          .particle-2, .particle-4, .particle-6,
+          .glass-orb-4, .glass-orb-5,
+          .light-rays { display: none !important; }
+
+          /* إبطاء الانيميشن المتبقية — أخف على CPU */
+          .glass-orb-1 { animation-duration: 28s !important; width: 260px !important; height: 260px !important; }
+          .glass-orb-2 { animation-duration: 34s !important; width: 200px !important; height: 200px !important; }
+          .glass-orb-3 { animation-duration: 24s !important; width: 150px !important; height: 150px !important; }
+          .ring-2 { animation-duration: 10s !important; }
+          .glow-spot { animation-duration: 12s !important; }
+          .glow-spot-1 { width: 180px !important; height: 180px !important; }
+          .glow-spot-2 { width: 140px !important; height: 140px !important; }
+          .glow-spot-3 { display: none !important; }
+          .particle-1, .particle-3, .particle-5 { animation-duration: 12s !important; }
+
+          /* إيقاف الانيميشن عند فتح الكيبورد */
+          .bg-futuristic.animations-paused * {
+            animation-play-state: paused !important;
+          }
         }
 
         /* Glass card effect */
@@ -604,18 +644,9 @@ export function BackgroundAnimation({ isDarkMode = false }: BackgroundAnimationP
           border: 1px solid rgba(255, 255, 255, 0.8);
           border-radius: 20px;
         }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-          .glass-orb-1 { width: 280px; height: 280px; }
-          .glass-orb-2 { width: 220px; height: 220px; }
-          .glass-orb-3 { width: 160px; height: 160px; }
-          .glass-crystal { transform: scale(0.7); }
-          .glass-ring { transform: scale(0.8); }
-        }
       `}</style>
 
-      <div className={`bg-futuristic ${isDarkMode ? 'dark-mode-bg' : 'light-mode-bg'}`} aria-hidden="true">
+      <div className={`bg-futuristic ${isDarkMode ? 'dark-mode-bg' : 'light-mode-bg'} ${isPaused ? 'animations-paused' : ''}`} aria-hidden="true" style={{ zIndex: -1, isolation: 'auto' }}>
         {/* Base gradient */}
         <div className={isDarkMode ? 'bg-base-dark' : 'bg-base-light'} />
 

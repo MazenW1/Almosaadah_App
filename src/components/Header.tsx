@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link, useNavigate, useLocation, NavLink } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import logoImg from '../img/Logo.png';
+import { NotificationsPanel } from './NotificationsPanel';
 
 interface HeaderProps {
   onLoginClick: () => void;
@@ -27,25 +29,51 @@ export function Header({
   const location = useLocation();
   const currentPage = location.pathname;
 
-  // ✅ التحقق اليدوي من الصلاحيات (احتياطي للـ DB timeout)
+  // ✅ استخدام useRef للـ observers عشان نقدر ننظفهم
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   const [manualIsAdmin, setManualIsAdmin] = useState(false);
   const [manualIsEmployee, setManualIsEmployee] = useState(false);
   const [manualIsClient, setManualIsClient] = useState(false);
   const [profileLoading, setProfileLoading] = useState(true);
-  
-  // ✅ إضافة: تخزين بيانات البروفايل
   const [profileData, setProfileData] = useState<any>(null);
 
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isPagesDropdownOpen, setIsPagesDropdownOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState('home');
+  const [time, setTime] = useState(new Date());
+  // ✅ تنظيف كل الـ observers لما الصفحة تتغير
+  useEffect(() => {
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      if (timeIntervalRef.current) {
+        clearInterval(timeIntervalRef.current);
+      }
+    };
+  }, [currentPage]);
+
+  // ✅ useEffect للـ profile مع isMounted flag
   useEffect(() => {
     if (!user?.email) {
       setProfileLoading(false);
       return;
     }
     
+    let isMounted = true;
+    
     const checkUser = async () => {
       setProfileLoading(true);
       try {
-        // Check employees table
         const { data: emp } = await supabase
           .from('employees')
           .select('employee_role, is_active, employee_name')
@@ -53,88 +81,108 @@ export function Header({
           .eq('is_active', true)
           .maybeSingle();
         
+        if (!isMounted) return;
+        
         if (emp) {
           const role = emp.employee_role?.toLowerCase();
           setManualIsAdmin(role === 'admin');
           setManualIsEmployee(role === 'employee' || role === 'admin');
           setManualIsClient(false);
           setProfileData({ ...emp, type: 'employee' });
-          console.log('✅ Header: Employee found', emp);
         } else {
-          // Check user table
           const { data: usr } = await supabase
             .from('user')
             .select('user_id, association_name')
             .eq('user_email', user.email)
             .maybeSingle();
           
+          if (!isMounted) return;
+          
           if (usr) {
             setManualIsAdmin(false);
             setManualIsEmployee(false);
             setManualIsClient(true);
             setProfileData({ ...usr, type: 'client' });
-            console.log('✅ Header: Client found');
           } else {
-            console.log('⚠️ Header: No profile found');
             setProfileData(null);
           }
         }
       } catch (err) {
         console.error('Header checkUser error:', err);
       } finally {
-        setProfileLoading(false);
+        if (isMounted) setProfileLoading(false);
       }
     };
     
     checkUser();
+    
+    return () => { isMounted = false; };
   }, [user]);
 
-  // استخدم الـ props أو الـ manual check أيهما صحيح
-  const finalIsAdmin = isAdmin || manualIsAdmin;
-  const finalIsEmployee = isEmployee || manualIsEmployee;
-  const finalIsClient = manualIsClient;
-
-  const [isScrolled, setIsScrolled] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState('home');
-  const [time, setTime] = useState(new Date());
-
+  // ✅ Scroll handler مع throttle (100ms)
   useEffect(() => {
-    const handleScroll = () => setIsScrolled(window.scrollY > 50);
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    const handleScroll = () => {
+      if (scrollTimeoutRef.current) return;
+      
+      scrollTimeoutRef.current = setTimeout(() => {
+        setIsScrolled(window.scrollY > 50);
+        scrollTimeoutRef.current = null;
+      }, 100);
+    };
+    
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    };
   }, []);
 
+  // ✅ Time interval مع cleanup
   useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    timeIntervalRef.current = setInterval(() => setTime(new Date()), 1000);
+    return () => {
+      if (timeIntervalRef.current) clearInterval(timeIntervalRef.current);
+    };
   }, []);
 
+  // ✅ IntersectionObserver مع cleanup صحيح
   useEffect(() => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+
+    if (currentPage !== '/') return;
+
     const sections = document.querySelectorAll('section[id]');
-    const observer = new IntersectionObserver(
+    if (sections.length === 0) return;
+
+    observerRef.current = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting) setActiveSection(entry.target.id);
+          if (entry.isIntersecting) {
+            setActiveSection(entry.target.id);
+          }
         });
       },
       { threshold: 0.3, rootMargin: '-100px 0px -50% 0px' }
     );
-    sections.forEach((section) => observer.observe(section));
-    return () => observer.disconnect();
-  }, []);
 
-  const navLinks = [
-    { href: '#home', label: 'الرئيسية', icon: 'fa-home' },
-    { href: '#services', label: 'خدماتنا', icon: 'fa-layer-group' },
-    { href: '#products', label: 'منتجاتنا', icon: 'fa-box-open' },
-    { href: '#partners', label: 'شركاؤنا', icon: 'fa-handshake' },
-    { href: '#news', label: 'الأخبار', icon: 'fa-newspaper' },
-    { href: '#stats', label: 'إحصائياتنا', icon: 'fa-chart-bar' },
-  ];
+    sections.forEach((section) => observerRef.current?.observe(section));
 
-  const handleLogout = async () => {
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+    };
+  }, [currentPage]);
+
+  const finalIsAdmin = isAdmin || manualIsAdmin;
+  const finalIsEmployee = isEmployee || manualIsEmployee;
+  const finalIsClient = manualIsClient;
+
+  const handleLogout = useCallback(async () => {
     setIsDropdownOpen(false);
     setIsMobileMenuOpen(false);
     try {
@@ -142,12 +190,11 @@ export function Header({
       onSignOut?.();
       navigate('/', { replace: true });
     } catch (error) {
-      console.error('Logout failed:', error);
       navigate('/', { replace: true });
     }
-  };
+  }, [navigate, onSignOut]);
 
-  const handleNavClick = (href: string) => {
+  const handleNavClick = useCallback((href: string) => {
     setIsDropdownOpen(false);
     setIsMobileMenuOpen(false);
     if (currentPage !== '/') {
@@ -158,17 +205,38 @@ export function Header({
     } else {
       document.querySelector(href)?.scrollIntoView({ behavior: 'smooth' });
     }
-  };
+  }, [currentPage, navigate]);
 
-  const formatTime = (d: Date) =>
-    d.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const formatTime = useCallback((d: Date) =>
+    d.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+  []);
 
-  // ✅ دالة مساعدة لعرض اسم المستخدم
-  const getDisplayName = () => {
+  const getDisplayName = useCallback(() => {
     if (profileLoading) return 'جاري التحميل...';
     if (profileData?.type === 'employee') return profileData.employee_name;
     if (profileData?.type === 'client') return profileData.association_name;
     return user?.email?.split('@')[0] || 'مستخدم';
+  }, [profileLoading, profileData, user]);
+
+  const navLinks = [
+    { href: '#home', label: 'الرئيسية', icon: 'fa-home' },
+    { href: '#services', label: 'خدماتنا', icon: 'fa-layer-group' },
+    { href: '#products', label: 'منتجاتنا', icon: 'fa-box-open' },
+    { href: '#partners', label: 'شركاؤنا', icon: 'fa-handshake' },
+    { href: '#news', label: 'الأخبار', icon: 'fa-newspaper' },
+    { href: '#stats', label: 'إحصائياتنا', icon: 'fa-chart-bar' },
+  ];
+
+  // الأقسام التي تنتمي للصفحة الرئيسية فقط (لا تُغيّر الـ active)
+  const homeSectionIds = ['home', 'services', 'products', 'partners', 'news', 'stats'];
+
+  // الصفحات المستقلة (خارج الـ home) – الدائرة تبقى على الرئيسية
+  const isOnHomePage = currentPage === '/';
+
+  // دالة لتحديد هل الزر active
+  const isNavActive = (href: string) => {
+    // الدائرة الزرقاء تبقى دائماً على الرئيسية — سواء على الصفحة الرئيسية أو غيرها
+    return href === '#home';
   };
 
   return (
@@ -186,8 +254,7 @@ export function Header({
           0% { background-position: 200% 0 }
           100% { background-position: -200% 0 }
         }
-        @keyframes pulse-ring {
-          0% { box-shadow: 0 0 0 0 var(--sky-glow); }
+        @keyframes pulse-ring { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
           70% { box-shadow: 0 0 0 8px transparent; }
           100% { box-shadow: 0 0 0 0 transparent; }
         }
@@ -219,11 +286,33 @@ export function Header({
           to { transform: translateX(0); opacity: 1; }
         }
         @keyframes dropdown-in {
-          from { transform: translateY(-12px) scale(0.97); opacity: 0; }
-          to { transform: translateY(0) scale(1); opacity: 1; }
+          from { transform: translateY(-10px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+          header.futuristic-header::before {
+            animation: none;
+            background: var(--sky);
+            opacity: 0.6;
+          }
+          .logo-img-ring {
+            animation: none;
+            box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.3);
+          }
+          header.futuristic-header.scrolled {
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            background: rgba(255, 255, 255, 0.97);
+          }
+          header.futuristic-header.scrolled.dark-header {
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            background: rgba(15, 23, 42, 0.98);
+          }
+          .scan-line, .header-grid-bg {
+            display: none !important;
+          }
         }
 
-        /* ── Header Shell ─────────────────────────────────────── */
         header.futuristic-header {
           position: fixed;
           top: 0;
@@ -234,6 +323,8 @@ export function Header({
           transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
           background: transparent;
           direction: rtl;
+          will-change: transform;
+          isolation: isolate;
         }
 
         header.futuristic-header.scrolled {
@@ -265,8 +356,8 @@ export function Header({
         header.futuristic-header.dark-header .user-avatar-btn { background: rgba(30,41,59,0.9); border-color: rgba(6,182,212,0.3); }
         header.futuristic-header.dark-header .user-name-text { color: #e2e8f0; }
         header.futuristic-header.dark-header .mobile-menu-btn-new { background: rgba(30,41,59,0.8); border-color: rgba(6,182,212,0.3); color: #38bdf8; }
+        header.futuristic-header.dark-header .dark-mode-toggle-btn { background: rgba(30,41,59,0.8); border-color: rgba(6,182,212,0.3); color: #38bdf8; }
 
-        /* Top accent bar */
         header.futuristic-header::before {
           content: '';
           position: absolute;
@@ -292,11 +383,16 @@ export function Header({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          height: 70px;
+          height: 40px;
           gap: 16px;
         }
+        @media (max-width: 480px) {
+          .header-inner {
+            padding: 0 14px;
+            gap: 8px;
+          }
+        }
 
-        /* ── Logo ─────────────────────────────────────── */
         .header-logo-wrap {
           display: flex;
           align-items: center;
@@ -329,6 +425,9 @@ export function Header({
           flex-direction: column;
           line-height: 1.2;
         }
+        @media (max-width: 360px) {
+          .logo-text-block { display: none; }
+        }
         .logo-title {
           font-family: 'Tajawal', sans-serif;
           font-weight: 900;
@@ -346,7 +445,6 @@ export function Header({
           font-weight: 600;
         }
 
-        /* ── Clock widget ────────────────────────────── */
         .header-clock {
           display: flex;
           align-items: center;
@@ -365,7 +463,6 @@ export function Header({
         .header-clock i { font-size: 0.65rem; animation: data-blink 1s step-start infinite; }
         @media (max-width: 768px) { .header-clock { display: none; } }
 
-        /* ── Nav Pill ────────────────────────────────── */
         .header-nav-pill {
           display: flex;
           align-items: center;
@@ -406,7 +503,6 @@ export function Header({
 
         @media (max-width: 1100px) { .header-nav-pill { display: none; } }
 
-        /* ── Right side actions ──────────────────────── */
         .header-actions {
           display: flex;
           align-items: center;
@@ -414,7 +510,6 @@ export function Header({
           flex-shrink: 0;
         }
 
-        /* Dashboard quick-access button */
         .dash-quick-btn {
           display: flex;
           align-items: center;
@@ -431,6 +526,7 @@ export function Header({
           position: relative;
           overflow: hidden;
         }
+        @media (max-width: 1100px) { .dash-quick-btn { display: none; } }
         .dash-quick-btn::before {
           content: '';
           position: absolute;
@@ -460,7 +556,6 @@ export function Header({
           animation: data-blink 1.2s ease infinite;
         }
 
-        /* Login / Register buttons */
         .btn-login {
           display: flex;
           align-items: center;
@@ -481,6 +576,7 @@ export function Header({
           background: var(--sky-light);
           transform: translateY(-1px);
         }
+        @media (max-width: 1100px) { .btn-login { display: none; } }
 
         .btn-register {
           display: flex;
@@ -502,8 +598,8 @@ export function Header({
           transform: translateY(-2px) scale(1.05);
           box-shadow: 0 8px 24px var(--sky-glow);
         }
+        @media (max-width: 1100px) { .btn-register { display: none; } }
 
-        /* User avatar button */
         .user-avatar-btn {
           display: flex;
           align-items: center;
@@ -521,6 +617,7 @@ export function Header({
           box-shadow: 0 4px 16px var(--sky-glow);
           transform: translateY(-1px);
         }
+        @media (max-width: 1100px) { .user-avatar-btn { display: none; } }
         .avatar-circle {
           width: 34px;
           height: 34px;
@@ -553,7 +650,6 @@ export function Header({
           white-space: nowrap;
         }
 
-        /* ── Dropdown ─────────────────────────────────── */
         .header-dropdown {
           position: absolute;
           top: calc(100% + 12px);
@@ -569,6 +665,7 @@ export function Header({
           animation: dropdown-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
           backdrop-filter: blur(24px);
           z-index: 200;
+          will-change: transform, opacity;
         }
 
         .dropdown-header-strip {
@@ -640,7 +737,6 @@ export function Header({
           margin: 6px 12px;
         }
 
-        /* ── Mobile Menu ─────────────────────────────── */
         .mobile-menu-btn-new {
           display: none;
           width: 42px;
@@ -687,6 +783,8 @@ export function Header({
           direction: rtl;
           border-left: 1px solid rgba(14,165,233,0.15);
           box-shadow: -20px 0 60px rgba(14,165,233,0.15);
+          will-change: transform;
+          contain: layout style paint;
         }
 
         .mobile-drawer-top {
@@ -737,6 +835,8 @@ export function Header({
           margin-bottom: 4px;
           transition: all 0.2s ease;
           text-align: right;
+          text-decoration: none;
+          box-sizing: border-box;
         }
         .mobile-nav-btn:hover, .mobile-nav-btn.active {
           background: var(--sky-light);
@@ -764,7 +864,6 @@ export function Header({
           gap: 8px;
         }
 
-        /* Floating admin button */
         .floating-admin-btn {
           position: fixed;
           bottom: 32px;
@@ -788,8 +887,50 @@ export function Header({
           transform: scale(1.06) translateY(-2px);
           box-shadow: 0 12px 36px rgba(249,115,22,0.55);
         }
+        @media (max-width: 768px) {
+          .floating-admin-btn {
+            bottom: 20px;
+            left: 16px;
+            padding: 11px 16px;
+            font-size: 13px;
+            gap: 7px;
+          }
+          .floating-admin-btn span { display: none; }
+        }
 
-        /* Skeleton */
+        @media (max-width: 1100px) {
+          .desktop-only-link { display: none !important; }
+        }
+
+        .dark-mode-toggle-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 40px;
+          height: 40px;
+          border-radius: 12px;
+          border: 1.5px solid rgba(14,165,233,0.2);
+          background: rgba(255,255,255,0.8);
+          color: #64748b;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          flex-shrink: 0;
+          backdrop-filter: blur(8px);
+        }
+        .dark-mode-toggle-btn:hover {
+          background: var(--sky-light);
+          border-color: var(--sky);
+          color: var(--sky-dark);
+        }
+        .dark-mode-toggle-btn.dark {
+          background: rgba(30,41,59,0.8);
+          border-color: rgba(6,182,212,0.5);
+          color: #38bdf8;
+        }
+        .dark-mode-toggle-btn.dark:hover {
+          background: rgba(51,65,85,0.9);
+          border-color: #06b6d4;
+        }
         @keyframes skel-shimmer {
           0% { background-position: 200% 0; }
           100% { background-position: -200% 0; }
@@ -802,18 +943,75 @@ export function Header({
           animation: skel-shimmer 1.5s infinite;
           margin-bottom: 8px;
         }
-      `}</style>
 
-      <header className={`futuristic-header${isScrolled ? ' scrolled' : ''}${isDarkMode ? ' dark-header' : ''}`}>
+        @media (max-width: 768px) {
+          .futuristic-header {
+            contain: layout style paint;
+            will-change: auto !important;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+          }
+        }
+
+        /* Mobile-specific header stability */
+        @media (max-width: 768px) and (hover: none) {
+          header.futuristic-header {
+            transform: translateZ(0);
+            backface-visibility: hidden;
+          }
+
+          header.futuristic-header::before {
+            animation: none !important;
+          }
+
+          .logo-img-ring {
+            animation: none !important;
+          }
+
+          .header-clock {
+            animation: none !important;
+          }
+        }
+      
+        /* ══ Header Mobile Performance ══ */
+        @media (max-width: 768px) {
+          .futuristic-header {
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            background: rgba(240, 249, 255, 0.97) !important;
+            will-change: auto !important;
+            contain: layout style !important;
+          }
+          html.dark .futuristic-header {
+            background: rgba(10, 17, 32, 0.98) !important;
+          }
+          .mobile-drawer {
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+          }
+          [class*="-dropdown"], [class*="-menu"], [class*="-notif"] {
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+          }
+          button, a { -webkit-tap-highlight-color: transparent; }
+          [class*="skel"] { animation-duration: 2.5s !important; }
+        }
+`}</style>
+
+      <header 
+  className={`futuristic-header${isScrolled ? ' scrolled' : ''}${isDarkMode ? ' dark-header' : ''}`}
+  style={{ zIndex: 1000, isolation: 'isolate' }}
+>
         <div className="header-inner">
-
-          {/* ── Logo ── */}
           <Link to="/" className="header-logo-wrap">
             <div className="logo-img-ring">
-              <img
-                src="/img/WhatsApp Image 2026-02-12 at 10.20.07 AM.jpeg"
-                alt="شعار المساعدة الإدارية"
-              />
+              <img src={logoImg} alt="شعار المساعدة الإدارية" />
             </div>
             <div className="logo-text-block">
               <span className="logo-title">المساعدة الإدارية</span>
@@ -821,36 +1019,26 @@ export function Header({
             </div>
           </Link>
 
-          {/* ── Center Nav Pills ── */}
           <div className="header-nav-pill">
             {navLinks.map((link) => (
               <button
                 key={link.href}
                 onClick={() => handleNavClick(link.href)}
-                className={`nav-pill-btn${activeSection === link.href.slice(1) ? ' active' : ''}`}
+                className={`nav-pill-btn${isNavActive(link.href) ? ' active' : ''}`}
               >
                 <i className={`fas ${link.icon}`} />
                 {link.label}
               </button>
             ))}
           </div>
-
-          {/* ── Right Actions ── */}
           <div className="header-actions">
-            {/* Dark Mode Toggle */}
             {onToggleDarkMode && (
               <button
                 onClick={onToggleDarkMode}
-                className={`flex items-center justify-center w-10 h-10 rounded-xl border transition-all duration-300
-                  ${isDarkMode
-                    ? 'bg-slate-700 border-cyan-500/50 text-cyan-400 hover:bg-slate-600 hover:border-cyan-400'
-                    : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:border-cyan-300'
-                  }`}
+                className={`dark-mode-toggle-btn${isDarkMode ? ' dark' : ''}`}
                 title={isDarkMode ? 'التبديل للوضع الفاتح' : 'التبديل للوضع الداكن'}
-                aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
               >
                 {isDarkMode ? (
-                  // Sun icon
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                     <circle cx="12" cy="12" r="5" fill="currentColor"/>
                     <g stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -865,7 +1053,6 @@ export function Header({
                     </g>
                   </svg>
                 ) : (
-                  // Moon icon
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor"/>
                   </svg>
@@ -873,13 +1060,11 @@ export function Header({
               </button>
             )}
 
-            {/* Live clock */}
             <div className="header-clock">
               <i className="fas fa-circle" />
               {formatTime(time)}
             </div>
 
-            {/* Dashboard quick access */}
             {user && !profileLoading && (
               <>
                 {(finalIsAdmin || finalIsEmployee) && (
@@ -899,23 +1084,87 @@ export function Header({
               </>
             )}
 
-            {/* Auth / User */}
             {!user ? (
               <>
-                <Link to="/reviews" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 100, border: '1.5px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.06)', color: '#d97706', fontFamily: 'Tajawal, sans-serif', fontSize: '0.82rem', fontWeight: 700, textDecoration: 'none', transition: 'all 0.25s ease' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(245,158,11,0.12)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(245,158,11,0.06)'; }}
-                >
-                  <i className="fas fa-star" style={{ fontSize: '0.72rem' }} />
-                  آراء العملاء
-                </Link>
-                <Link to="/projects" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 100, border: '1.5px solid rgba(139,92,246,0.25)', background: 'rgba(139,92,246,0.06)', color: '#7c3aed', fontFamily: 'Tajawal, sans-serif', fontSize: '0.82rem', fontWeight: 700, textDecoration: 'none', transition: 'all 0.25s ease' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(139,92,246,0.12)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(139,92,246,0.06)'; }}
-                >
-                  <i className="fas fa-project-diagram" style={{ fontSize: '0.72rem' }} />
-                  المشاريع
-                </Link>
+                {/* قائمة الصفحات المنسدلة - للزوار */}
+                <div style={{ position: 'relative' }} className="desktop-only-link">
+                  <button
+                    onClick={() => setIsPagesDropdownOpen(!isPagesDropdownOpen)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 7,
+                      padding: '9px 16px', borderRadius: 100,
+                      border: '1.5px solid rgba(14,165,233,0.25)',
+                      background: isPagesDropdownOpen ? 'var(--sky-light)' : 'rgba(14,165,233,0.06)',
+                      color: 'var(--sky-dark)', fontFamily: 'Tajawal, sans-serif',
+                      fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer',
+                      transition: 'all 0.25s ease',
+                    }}
+                  >
+                    <i className="fas fa-th-large" style={{ fontSize: '0.72rem' }} />
+                    الصفحات
+                    <i className="fas fa-chevron-down" style={{ fontSize: '0.6rem', transition: 'transform 0.3s', transform: isPagesDropdownOpen ? 'rotate(180deg)' : 'none' }} />
+                  </button>
+                  {isPagesDropdownOpen && (
+                    <>
+                      <div style={{ position: 'fixed', inset: 0, zIndex: 100 }} onClick={() => setIsPagesDropdownOpen(false)} />
+                      <div className="header-dropdown" style={{ zIndex: 200, right: 0, left: 'auto' }}>
+                        <div className="dropdown-header-strip">
+                          <div className="di-icon" style={{ width: 38, height: 38, background: 'rgba(14,165,233,0.1)', color: 'var(--sky-dark)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <i className="fas fa-sitemap" />
+                          </div>
+                          <div className="dropdown-user-info">
+                            <div className="dropdown-user-name">الصفحات</div>
+                            <div className="dropdown-user-role">تصفح جميع الأقسام</div>
+                          </div>
+                        </div>
+                        <div className="dropdown-menu-items">
+                          <button className="dropdown-item" onClick={() => { setIsPagesDropdownOpen(false); handleNavClick('#home'); }}>
+                            <div className="di-icon" style={{ background: 'rgba(14,165,233,0.1)', color: 'var(--sky-dark)' }}><i className="fas fa-home" /></div>
+                            الرئيسية
+                          </button>
+                          <button className="dropdown-item" onClick={() => { setIsPagesDropdownOpen(false); handleNavClick('#services'); }}>
+                            <div className="di-icon" style={{ background: 'rgba(14,165,233,0.08)', color: 'var(--sky-dark)' }}><i className="fas fa-layer-group" /></div>
+                            خدماتنا
+                          </button>
+                          <button className="dropdown-item" onClick={() => { setIsPagesDropdownOpen(false); handleNavClick('#products'); }}>
+                            <div className="di-icon" style={{ background: 'rgba(16,185,129,0.1)', color: '#059669' }}><i className="fas fa-box-open" /></div>
+                            منتجاتنا
+                          </button>
+                          <button className="dropdown-item" onClick={() => { setIsPagesDropdownOpen(false); handleNavClick('#partners'); }}>
+                            <div className="di-icon" style={{ background: 'rgba(245,158,11,0.1)', color: '#d97706' }}><i className="fas fa-handshake" /></div>
+                            شركاؤنا
+                          </button>
+                          <button className="dropdown-item" onClick={() => { setIsPagesDropdownOpen(false); handleNavClick('#news'); }}>
+                            <div className="di-icon" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}><i className="fas fa-newspaper" /></div>
+                            الأخبار
+                          </button>
+                          <button className="dropdown-item" onClick={() => { setIsPagesDropdownOpen(false); handleNavClick('#stats'); }}>
+                            <div className="di-icon" style={{ background: 'rgba(139,92,246,0.1)', color: '#8b5cf6' }}><i className="fas fa-chart-bar" /></div>
+                            إحصائياتنا
+                          </button>
+                          <div className="dropdown-divider" />
+                          <Link to="/events" className="dropdown-item" onClick={() => setIsPagesDropdownOpen(false)}>
+                            <div className="di-icon" style={{ background: 'rgba(6,182,212,0.1)', color: '#0891b2' }}><i className="fas fa-calendar-alt" /></div>
+                            الفعاليات
+                          </Link>
+                          <Link to="/jobs" className="dropdown-item" onClick={() => setIsPagesDropdownOpen(false)}>
+                            <div className="di-icon" style={{ background: 'rgba(99,102,241,0.1)', color: '#6366f1' }}><i className="fas fa-briefcase" /></div>
+                            الوظائف
+                          </Link>
+                          <div className="dropdown-divider" />
+                          <Link to="/reviews" className="dropdown-item" onClick={() => setIsPagesDropdownOpen(false)}>
+                            <div className="di-icon" style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}><i className="fas fa-star" /></div>
+                            آراء العملاء
+                          </Link>
+                          <Link to="/projects" className="dropdown-item" onClick={() => setIsPagesDropdownOpen(false)}>
+                            <div className="di-icon" style={{ background: 'rgba(139,92,246,0.1)', color: '#8b5cf6' }}><i className="fas fa-project-diagram" /></div>
+                            المشاريع
+                          </Link>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
                 <button className="btn-login" onClick={onLoginClick}>
                   <i className="fas fa-lock" style={{ fontSize: '0.75rem' }} />
                   دخول
@@ -926,7 +1175,16 @@ export function Header({
                 </button>
               </>
             ) : (
-              <div style={{ position: 'relative' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {/* ── زر الإشعارات — يظهر لجميع المستخدمين المسجلين ── */}
+            
+              <NotificationsPanel
+                userId={user?.id}
+                onNavigate={(path) => navigate(path)}
+              />
+
+                {/* ── Avatar / Dropdown ── */}
+                <div style={{ position: 'relative' }}>
                 <button
                   className="user-avatar-btn"
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
@@ -941,7 +1199,6 @@ export function Header({
                       <div className="avatar-circle">
                         <i className="fas fa-user" />
                       </div>
-                      {/* ✅ تم التصحيح هنا - استخدام getDisplayName() بدلاً من profile */}
                       <span className="user-name-text">
                         {getDisplayName()}
                       </span>
@@ -965,7 +1222,6 @@ export function Header({
                       onClick={() => setIsDropdownOpen(false)}
                     />
                     <div className="header-dropdown" style={{ zIndex: 200 }}>
-                      {/* User info strip */}
                       <div className="dropdown-header-strip">
                         <div className="avatar-circle" style={{ width: 38, height: 38, flexShrink: 0 }}>
                           <i className="fas fa-user" />
@@ -979,7 +1235,6 @@ export function Header({
                       </div>
 
                       <div className="dropdown-menu-items">
-                        {/* Role-based items */}
                         {profileLoading ? (
                           <>
                             <div className="skel-item" />
@@ -989,21 +1244,13 @@ export function Header({
                           <>
                             {(finalIsAdmin || finalIsEmployee) && (
                               <>
-                                <Link
-                                  to="/dashboard"
-                                  className="dropdown-item"
-                                  onClick={() => setIsDropdownOpen(false)}
-                                >
+                                <Link to="/dashboard" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
                                   <div className="di-icon" style={{ background: 'rgba(14,165,233,0.1)', color: 'var(--sky-dark)' }}>
                                     <i className="fas fa-th-large" />
                                   </div>
                                   لوحة التحكم
                                 </Link>
-                                <Link
-                                  to="/add-news"
-                                  className="dropdown-item"
-                                  onClick={() => setIsDropdownOpen(false)}
-                                >
+                                <Link to="/add-news" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
                                   <div className="di-icon" style={{ background: 'rgba(249,115,22,0.1)', color: '#f97316' }}>
                                     <i className="fas fa-bullhorn" />
                                   </div>
@@ -1012,11 +1259,7 @@ export function Header({
                               </>
                             )}
                             {finalIsClient && (
-                              <Link
-                                to="/dashboard"
-                                className="dropdown-item"
-                                onClick={() => setIsDropdownOpen(false)}
-                              >
+                              <Link to="/dashboard" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
                                 <div className="di-icon" style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981' }}>
                                   <i className="fas fa-clipboard-list" />
                                 </div>
@@ -1028,11 +1271,7 @@ export function Header({
 
                         <div className="dropdown-divider" />
 
-                        <Link
-                          to="/profile"
-                          className="dropdown-item"
-                          onClick={() => setIsDropdownOpen(false)}
-                        >
+                        <Link to="/profile" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
                           <div className="di-icon" style={{ background: 'rgba(100,116,139,0.1)', color: '#64748b' }}>
                             <i className="fas fa-id-card" />
                           </div>
@@ -1041,26 +1280,32 @@ export function Header({
 
                         <div className="dropdown-divider" />
 
-                        <Link
-                          to="/reviews"
-                          className="dropdown-item"
-                          onClick={() => setIsDropdownOpen(false)}
-                        >
+                        <Link to="/reviews" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
                           <div className="di-icon" style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b' }}>
                             <i className="fas fa-star" />
                           </div>
                           آراء العملاء
                         </Link>
 
-                        <Link
-                          to="/projects"
-                          className="dropdown-item"
-                          onClick={() => setIsDropdownOpen(false)}
-                        >
+                        <Link to="/projects" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
                           <div className="di-icon" style={{ background: 'rgba(139, 92, 246, 0.1)', color: '#8b5cf6' }}>
                             <i className="fas fa-project-diagram" />
                           </div>
                           المشاريع
+                        </Link>
+
+                        <Link to="/events" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
+                          <div className="di-icon" style={{ background: 'rgba(6,182,212,0.1)', color: '#0891b2' }}>
+                            <i className="fas fa-calendar-alt" />
+                          </div>
+                          الفعاليات
+                        </Link>
+
+                        <Link to="/jobs" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
+                          <div className="di-icon" style={{ background: 'rgba(99,102,241,0.1)', color: '#6366f1' }}>
+                            <i className="fas fa-briefcase" />
+                          </div>
+                          الوظائف
                         </Link>
                         
                         <div className="dropdown-divider" />
@@ -1076,9 +1321,9 @@ export function Header({
                   </>
                 )}
               </div>
+              </div>
             )}
 
-            {/* Mobile hamburger */}
             <button
               className="mobile-menu-btn-new"
               onClick={() => setIsMobileMenuOpen(true)}
@@ -1090,7 +1335,6 @@ export function Header({
         </div>
       </header>
 
-      {/* ── Floating Add News ── */}
       {user && (finalIsAdmin || finalIsEmployee) && !profileLoading && currentPage === '/' && (
         <Link to="/dashboard" className="floating-admin-btn">
           <span>إضافة خبر جديد</span>
@@ -1098,7 +1342,6 @@ export function Header({
         </Link>
       )}
 
-      {/* ── Mobile Drawer ── */}
       {isMobileMenuOpen && (
         <>
           <div className="mobile-overlay" onClick={() => setIsMobileMenuOpen(false)} />
@@ -1114,17 +1357,48 @@ export function Header({
               {navLinks.map((link) => (
                 <button
                   key={link.href}
-                  className={`mobile-nav-btn${activeSection === link.href.slice(1) ? ' active' : ''}`}
+                  className={`mobile-nav-btn${isNavActive(link.href) ? ' active' : ''}`}
                   onClick={() => handleNavClick(link.href)}
                 >
                   <div className="mn-icon"><i className={`fas ${link.icon}`} /></div>
                   {link.label}
                 </button>
               ))}
+              <NavLink
+                to="/events"
+                className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <div className="mn-icon"><i className="fas fa-calendar-alt" /></div>
+                الفعاليات
+              </NavLink>
+              <NavLink
+                to="/jobs"
+                className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <div className="mn-icon"><i className="fas fa-briefcase" /></div>
+                الوظائف
+              </NavLink>
+              <NavLink
+                to="/projects"
+                className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <div className="mn-icon" style={{ background: 'rgba(139,92,246,0.1)', color: '#7c3aed', border: '1px solid rgba(139,92,246,0.15)' }}><i className="fas fa-project-diagram" /></div>
+                المشاريع
+              </NavLink>
+              <NavLink
+                to="/reviews"
+                className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <div className="mn-icon" style={{ background: 'rgba(245,158,11,0.1)', color: '#d97706', border: '1px solid rgba(245,158,11,0.15)' }}><i className="fas fa-star" /></div>
+                آراء العملاء
+              </NavLink>
             </div>
 
             <div className="mobile-auth-area">
-              {/* Dark Mode Toggle - Mobile */}
               {onToggleDarkMode && (
                 <button
                   onClick={() => { onToggleDarkMode(); setIsMobileMenuOpen(false); }}
@@ -1163,14 +1437,6 @@ export function Header({
 
               {!user ? (
                 <>
-                  <Link to="/reviews" onClick={() => setIsMobileMenuOpen(false)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', background: 'rgba(245,158,11,0.08)', color: '#d97706', borderRadius: '14px', fontWeight: '800', textDecoration: 'none', fontFamily: 'Tajawal, sans-serif', fontSize: '0.88rem', border: '1px solid rgba(245,158,11,0.2)' }}>
-                    <i className="fas fa-star" /> آراء العملاء
-                  </Link>
-                  <Link to="/projects" onClick={() => setIsMobileMenuOpen(false)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', background: 'rgba(139,92,246,0.08)', color: '#7c3aed', borderRadius: '14px', fontWeight: '800', textDecoration: 'none', fontFamily: 'Tajawal, sans-serif', fontSize: '0.88rem', border: '1px solid rgba(139,92,246,0.2)' }}>
-                    <i className="fas fa-project-diagram" /> المشاريع
-                  </Link>
                   <button
                     onClick={() => { setIsMobileMenuOpen(false); onLoginClick(); }}
                     style={{
@@ -1235,29 +1501,6 @@ export function Header({
                       border: '1px solid #e2e8f0',
                     }}>
                     <i className="fas fa-id-card" /> الملف الشخصي
-                  </Link>
-                  
-                  {/* ✅ إضافة: روابط Reviews و Projects في الموبايل */}
-                  <Link to="/reviews" onClick={() => setIsMobileMenuOpen(false)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '10px',
-                      padding: '12px 14px', background: 'rgba(245, 158, 11, 0.08)',
-                      color: '#f59e0b', borderRadius: '14px', fontWeight: '800', textDecoration: 'none',
-                      fontFamily: 'Tajawal, sans-serif', fontSize: '0.88rem',
-                      border: '1px solid rgba(245, 158, 11, 0.2)',
-                    }}>
-                    <i className="fas fa-star" /> آراء العملاء
-                  </Link>
-                  
-                  <Link to="/projects" onClick={() => setIsMobileMenuOpen(false)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '10px',
-                      padding: '12px 14px', background: 'rgba(139, 92, 246, 0.08)',
-                      color: '#8b5cf6', borderRadius: '14px', fontWeight: '800', textDecoration: 'none',
-                      fontFamily: 'Tajawal, sans-serif', fontSize: '0.88rem',
-                      border: '1px solid rgba(139, 92, 246, 0.2)',
-                    }}>
-                    <i className="fas fa-project-diagram" /> المشاريع
                   </Link>
                   
                   <button onClick={handleLogout}

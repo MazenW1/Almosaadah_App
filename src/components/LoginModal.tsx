@@ -70,11 +70,10 @@ export function LoginModal({ isOpen, onClose, onLogin, onSwitchToRegister, onFor
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'rgba(15, 23, 42, 0.6)',
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
+        background: 'rgba(15, 23, 42, 0.82)',
         padding: '20px',
         overflowY: 'auto',
+        isolation: 'isolate',
       }}
     >
       <div
@@ -88,9 +87,7 @@ export function LoginModal({ isOpen, onClose, onLogin, onSwitchToRegister, onFor
           borderRadius: '20px',
           position: 'relative',
           margin: 'auto',
-          background: 'rgba(255,255,255,0.92)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
+          background: '#ffffff',
           border: '1px solid rgba(6,182,212,0.2)',
           boxShadow: '0 32px 80px rgba(6,182,212,0.15), 0 8px 32px rgba(0,0,0,0.1)',
         }}

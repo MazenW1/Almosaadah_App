@@ -1,3 +1,4 @@
+import footerLogo from '../img/Logo.png';
 export function Footer() {
   const currentYear = new Date().getFullYear();
 
@@ -178,7 +179,7 @@ export function Footer() {
         <div className="footer-inner">
           <div className="footer-logo-block">
             <img
-              src="/img/WhatsApp Image 2026-02-12 at 10.20.07 AM.jpeg"
+              src={footerLogo} // استخدام المتغير المستورد
               alt="شعار المساعدة الإدارية"
               className="footer-logo-img"
               width="72"

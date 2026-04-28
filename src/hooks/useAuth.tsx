@@ -1,75 +1,158 @@
 // hooks/useAuth.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+// مزوّد المصادقة المركزي — يُغلّف التطبيق كله ويوفّر حالة المستخدم
+// ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect, useCallback, useContext, createContext, useRef } from 'react';
 import { supabase, User, Employee } from '../lib/supabase';
 import type { User as AuthUser, Session } from '@supabase/supabase-js';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Types ══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 interface UseAuthReturn {
-  user: AuthUser | null;
-  session: Session | null;
-  isAdmin: boolean;
-  isEmployee: boolean;
-  isClient: boolean;
-  loading: boolean;
-  profileLoading: boolean;
-  hasSession: boolean;
+  user:            AuthUser  | null;
+  session:         Session   | null;
+  userProfile:     User      | null;    // ← بيانات جدول user (association_name …)
+  employeeProfile: Employee  | null;    // ← بيانات جدول employees
+  isAdmin:         boolean;
+  isEmployee:      boolean;
+  isClient:        boolean;
+  loading:         boolean;
+  profileLoading:  boolean;
+  hasSession:      boolean;
   showAdminDashboard: boolean;
-  showUserOrders: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: any }>;
-  signUp: (email: string, password: string) => Promise<{ error: any }>;
-  signOut: () => Promise<void>;
+  showUserOrders:     boolean;
+  signIn:         (email: string, password: string) => Promise<{ error: any }>;
+  signUp:         (email: string, password: string) => Promise<{ error: any }>;
+  signOut:        () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
-// ─── Context ──────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Context ════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 const AuthContext = createContext<UseAuthReturn | null>(null);
 
-const CACHE_DURATION = 10 * 60 * 1000; // 10 دقائق
-const LS_KEY = 'auth_profile_cache';
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Cache Helpers ══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// ─── localStorage helpers ─────────────────────────────────────────────────────
-function readLSCache(email: string) {
+const CACHE_DURATION = 10 * 60 * 1000;
+const LS_KEY         = 'auth_profile_cache';
+const CACHE_SALT     = 'alm_v1_';
+
+type LSCacheEntry = {
+  email:     string;
+  emp:       Employee | null;
+  usr:       User     | null;
+  timestamp: number;
+};
+
+function encodeCache(data: object): string {
+  try { return btoa(CACHE_SALT + JSON.stringify(data)); } catch { return ''; }
+}
+
+function decodeCache(encoded: string): LSCacheEntry | null {
+  try {
+    const decoded = atob(encoded);
+    if (!decoded.startsWith(CACHE_SALT)) return null;
+    return JSON.parse(decoded.slice(CACHE_SALT.length));
+  } catch { return null; }
+}
+
+function readLSCache(email: string): LSCacheEntry | null {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return null;
-    const cached = JSON.parse(raw);
+    const cached = decodeCache(raw);
+    if (!cached) return null;
     if (cached.email !== email) return null;
     if (Date.now() - cached.timestamp > CACHE_DURATION) return null;
-    return cached as { email: string; emp: Employee | null; usr: User | null; timestamp: number };
+    return cached;
   } catch { return null; }
 }
 
 function writeLSCache(email: string, emp: Employee | null, usr: User | null) {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ email, emp, usr, timestamp: Date.now() }));
+    const safeEmp = emp ? {
+      employee_id:    emp.employee_id,
+      employee_role:  emp.employee_role,
+      employee_name:  emp.employee_name,
+      employee_email: emp.employee_email,
+      is_active:      emp.is_active,
+    } : null;
+
+    const safeUsr = usr ? {
+      user_id:           usr.user_id,
+      user_email:        usr.user_email,
+      association_name:  usr.association_name,
+      entity_type:       usr.entity_type,
+      is_review_blocked: usr.is_review_blocked,
+    } : null;
+
+    localStorage.setItem(LS_KEY, encodeCache({ email, emp: safeEmp, usr: safeUsr, timestamp: Date.now() }));
   } catch {}
 }
 
 function clearLSCache() {
-  try { localStorage.removeItem(LS_KEY); } catch {}
+  try {
+    ['auth_profile_cache', 'user_profile', 'emp_profile'].forEach(k => localStorage.removeItem(k));
+  } catch {}
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Rate Limiter ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const loginAttempts = { count: 0, blockedUntil: 0 };
+
+function checkLoginRateLimit(): { allowed: boolean; waitSeconds: number } {
+  const now = Date.now();
+  if (now < loginAttempts.blockedUntil)
+    return { allowed: false, waitSeconds: Math.ceil((loginAttempts.blockedUntil - now) / 1000) };
+  return { allowed: true, waitSeconds: 0 };
+}
+
+function recordLoginAttempt(success: boolean) {
+  if (success) { loginAttempts.count = 0; loginAttempts.blockedUntil = 0; return; }
+  loginAttempts.count++;
+  if (loginAttempts.count >= 5) {
+    const mins = Math.min(30, Math.pow(2, loginAttempts.count - 5));
+    loginAttempts.blockedUntil = Date.now() + mins * 60_000;
+  }
+}
+
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ AuthProvider ════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [employeeProfile, setEmployeeProfile] = useState<Employee | null>(null);
-  const [userProfile, setUserProfile] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [profileLoading, setProfileLoading] = useState(true);
-  const [hasSession, setHasSession] = useState(false);
+  const [user,            setUser]            = useState<AuthUser  | null>(null);
+  const [session,         setSession]         = useState<Session   | null>(null);
+  const [employeeProfile, setEmployeeProfile] = useState<Employee  | null>(null);
+  const [userProfile,     setUserProfile]     = useState<User      | null>(null);
+  const [loading,         setLoading]         = useState(true);
+  const [profileLoading,  setProfileLoading]  = useState(true);
+  const [hasSession,      setHasSession]      = useState(false);
 
-  const profileCache = useRef<{
-    email: string;
-    emp: Employee | null;
-    usr: User | null;
-    timestamp: number;
-  } | null>(null);
-
-  const isFetching = useRef(false);
+  const profileCache    = useRef<LSCacheEntry | null>(null);
+  const isFetching      = useRef(false);
   const currentEmailRef = useRef<string | null>(null);
 
+  // ─── fetchProfiles ────────────────────────────────────────────────────────────
   const fetchProfiles = useCallback(async (email: string, forceRefresh = false) => {
-    // 1) تحقق من memory cache
+    if (!EMAIL_REGEX.test(email) || email.length > 254) {
+      console.error('[useAuth] صيغة البريد غير صحيحة');
+      setProfileLoading(false);
+      setLoading(false);
+      return;
+    }
+
+    // 1) Memory cache
     if (!forceRefresh && profileCache.current?.email === email) {
       const age = Date.now() - profileCache.current.timestamp;
       if (age < CACHE_DURATION) {
@@ -81,7 +164,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // 2) تحقق من localStorage cache — يحل مشكلة التحميل عند الـ refresh
+    // 2) localStorage cache — يُظهر البيانات فوراً ثم يجلب تحديثاً في الخلفية
     if (!forceRefresh) {
       const lsCache = readLSCache(email);
       if (lsCache) {
@@ -90,62 +173,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUserProfile(lsCache.usr);
         setProfileLoading(false);
         setLoading(false);
-        // جيب من DB في الخلفية بدون إظهار loading
-        setTimeout(() => fetchProfiles(email, true), 100);
+        setTimeout(() => fetchProfiles(email, true), 500);
         return;
       }
     }
 
-    if (isFetching.current) return;
+    // منع طلبات متزامنة
+    if (isFetching.current) {
+      await new Promise(r => setTimeout(r, 50));
+      if (isFetching.current) return;
+    }
     isFetching.current = true;
     setProfileLoading(true);
 
-    // 3) timeout مخفّض من 30s إلى 6s
-    const timeout = setTimeout(() => {
-      if (!isFetching.current) return;
-      console.warn('useAuth: DB timeout — continuing without profile');
-      // استخدم آخر cache موجود إذا كان عندنا
-      const fallback = profileCache.current;
-      if (fallback?.email === email) {
-        setEmployeeProfile(fallback.emp);
-        setUserProfile(fallback.usr);
-      } else {
-        setEmployeeProfile(null);
-        setUserProfile(null);
-      }
-      setProfileLoading(false);
-      setLoading(false);
-      isFetching.current = false;
-    }, 6000);
+    const timeoutPromise = new Promise<'timeout'>(resolve =>
+      setTimeout(() => resolve('timeout'), 8000)
+    );
+
+    const fetchPromise = Promise.all([
+      supabase
+        .from('employees')
+        .select('employee_id, employee_role, is_active, employee_name, employee_email')
+        .eq('employee_email', email)
+        .maybeSingle(),
+      supabase
+        .from('user')
+        .select('user_id, user_email, association_name, entity_type, is_review_blocked')
+        .eq('user_email', email)
+        .maybeSingle(),
+    ]);
 
     try {
-      const [{ data: emp, error: empError }, { data: usr, error: usrError }] = await Promise.all([
-        supabase
-          .from('employees')
-          .select('employee_id, employee_role, is_active, employee_name, employee_email, employee_phone')
-          .eq('employee_email', email)
-          .maybeSingle(),
-        supabase
-          .from('user')
-          .select('user_id, user_email, association_name, user_phone, entity_type, license_number')
-          .eq('user_email', email)
-          .maybeSingle(),
-      ]);
+      const result = await Promise.race([fetchPromise, timeoutPromise]);
 
-      if (empError) console.warn('Employee fetch error:', empError.message);
-      if (usrError) console.warn('User fetch error:', usrError.message);
+      if (result === 'timeout') {
+        console.warn('[useAuth] ⚠️ تأخرت قاعدة البيانات، يُستخدم الكاش');
+        const fallback = readLSCache(email);
+        if (fallback) {
+          setEmployeeProfile(fallback.emp);
+          setUserProfile(fallback.usr);
+        }
+        setProfileLoading(false);
+        setLoading(false);
+        isFetching.current = false;
+        setTimeout(() => fetchProfiles(email, true), 5000);
+        return;
+      }
+
+      const [{ data: emp, error: empErr }, { data: usr, error: usrErr }] = result;
+
+      if (empErr) console.warn('[useAuth] Employee error:', empErr.message);
+      if (usrErr)  console.warn('[useAuth] User error:',     usrErr.message);
 
       const empData = emp ?? null;
       const usrData = usr ?? null;
 
       profileCache.current = { email, emp: empData, usr: usrData, timestamp: Date.now() };
       writeLSCache(email, empData, usrData);
-
       setEmployeeProfile(empData);
       setUserProfile(usrData);
+
     } catch (err) {
-      console.error('useAuth fetchProfiles:', err);
-      // عند الخطأ استخدم آخر cache
+      console.error('[useAuth] fetchProfiles خطأ:', err);
       const fallback = readLSCache(email);
       if (fallback) {
         setEmployeeProfile(fallback.emp);
@@ -156,80 +245,95 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUserProfile(null);
       }
     } finally {
-      clearTimeout(timeout);
       setProfileLoading(false);
       setLoading(false);
       isFetching.current = false;
     }
   }, []);
 
+  // ─── refreshProfile ───────────────────────────────────────────────────────────
   const refreshProfile = useCallback(async () => {
-    if (currentEmailRef.current) {
-      await fetchProfiles(currentEmailRef.current, true);
-    }
+    if (currentEmailRef.current) await fetchProfiles(currentEmailRef.current, true);
   }, [fetchProfiles]);
 
+  // ─── Bootstrap + Auth Listener ────────────────────────────────────────────────
   useEffect(() => {
-    let mounted = true;
+    let mounted       = true;
+    let bootstrapDone = false;
 
-    const init = async () => {
+    // Safety timeout — يوقف loading فقط، لا يسجّل خروج
+    const globalTimeout = setTimeout(() => {
+      if (mounted) {
+        console.warn('[useAuth] Safety timeout');
+        setLoading(false);
+        setProfileLoading(false);
+      }
+    }, 10_000);
+
+    const bootstrap = async () => {
+      if (bootstrapDone) return;
+      bootstrapDone = true;
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        let sessionData = null;
+        let sessionError = null;
+
+        // retry حتى 3 مرات
+        for (let i = 0; i < 3; i++) {
+          const { data, error } = await supabase.auth.getSession();
+          if (!error) { sessionData = data; break; }
+          sessionError = error;
+          await new Promise(r => setTimeout(r, 500 * (i + 1)));
+        }
+
         if (!mounted) return;
 
-        if (session?.user && !session.user.email_confirmed_at) {
-          await supabase.auth.signOut();
-          setSession(null);
-          setUser(null);
-          setLoading(false);
-          setProfileLoading(false);
+        if (sessionError && !sessionData?.session) {
+          console.log('[useAuth] فشل استرداد الجلسة');
+          if (mounted) { setLoading(false); setProfileLoading(false); setHasSession(false); }
           return;
         }
 
-        setSession(session);
-        setUser(session?.user ?? null);
+        const sess = sessionData?.session;
 
-        if (session?.user?.email) {
-          currentEmailRef.current = session.user.email;
-          setHasSession(true);
-          await fetchProfiles(session.user.email);
-        } else {
-          setLoading(false);
-          setProfileLoading(false);
+        if (!sess?.user) {
+          if (mounted) {
+            setUser(null); setSession(null);
+            setHasSession(false); setLoading(false); setProfileLoading(false);
+          }
+          return;
         }
-      } catch {
+
         if (mounted) {
-          setLoading(false);
-          setProfileLoading(false);
+          setSession(sess);
+          setUser(sess.user);
+          currentEmailRef.current = sess.user.email ?? null;
+          setHasSession(true);
         }
+
+        if (sess.user.email && mounted) await fetchProfiles(sess.user.email);
+
+      } catch (err) {
+        console.error('[useAuth] خطأ غير متوقع:', err);
+        if (mounted) { setLoading(false); setProfileLoading(false); }
+      } finally {
+        if (mounted) { setLoading(false); setProfileLoading(false); }
       }
     };
 
-    init();
+    setTimeout(bootstrap, 100);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!mounted || event === 'INITIAL_SESSION') return;
+      async (event, sess) => {
+        if (!mounted) return;
+        if (event === 'INITIAL_SESSION') return;
 
-        if (session?.user && !session.user.email_confirmed_at) {
-          await supabase.auth.signOut();
-          setSession(null);
-          setUser(null);
-          setHasSession(false);
-          setEmployeeProfile(null);
-          setUserProfile(null);
-          setProfileLoading(false);
-          setLoading(false);
-          return;
-        }
-
-        setSession(session);
-        setUser(session?.user ?? null);
+        setSession(sess);
+        setUser(sess?.user ?? null);
 
         if (event === 'SIGNED_OUT') {
           currentEmailRef.current = null;
-          profileCache.current = null;
-          isFetching.current = false;
+          profileCache.current    = null;
+          isFetching.current      = false;
           clearLSCache();
           setHasSession(false);
           setEmployeeProfile(null);
@@ -239,80 +343,149 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (session?.user?.email) {
-          currentEmailRef.current = session.user.email;
-          setHasSession(true);
-          await fetchProfiles(session.user.email);
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          if (sess?.user?.email) {
+            currentEmailRef.current = sess.user.email;
+            setHasSession(true);
+
+            // ── حفظ بيانات التسجيل من sessionStorage بعد التحقق من البريد ──
+            const pending = sessionStorage.getItem('pending_registration');
+            if (pending && sess.user.id) {
+              try {
+                const reg = JSON.parse(pending);
+                if (reg.user_id === sess.user.id) {
+                  await supabase.from('user').upsert([{
+                    user_id:          reg.user_id,
+                    association_name: reg.association_name,
+                    user_phone:       reg.user_phone || null,
+                    user_email:       reg.user_email,
+                    license_number:   reg.license_number || null,
+                    entity_type:      reg.entity_type || null,
+                    email_verified:   true,
+                    email_verified_at: new Date().toISOString(),
+                  }], { onConflict: 'user_id' });
+                  sessionStorage.removeItem('pending_registration');
+                }
+              } catch {}
+            }
+
+            await fetchProfiles(sess.user.email);
+          }
         }
       }
     );
 
+    // تحديث الكاش تلقائياً كل دقيقة إذا اقترب من الانتهاء
     const refreshInterval = setInterval(() => {
       if (currentEmailRef.current && profileCache.current) {
         const age = Date.now() - profileCache.current.timestamp;
-        if (age > CACHE_DURATION * 0.8) {
-          fetchProfiles(currentEmailRef.current, true);
-        }
+        if (age > CACHE_DURATION * 0.8) fetchProfiles(currentEmailRef.current, true);
       }
     }, 60_000);
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      clearTimeout(globalTimeout);
       clearInterval(refreshInterval);
+      subscription.unsubscribe();
     };
   }, [fetchProfiles]);
 
+  // ─── signIn ───────────────────────────────────────────────────────────────────
   const signIn = useCallback(async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (!email || !password)
+      return { error: new Error('يرجى إدخال البريد الإلكتروني وكلمة المرور') };
+
+    const cleanEmail = email.trim().toLowerCase();
+    if (!EMAIL_REGEX.test(cleanEmail) || cleanEmail.length > 254)
+      return { error: new Error('صيغة البريد الإلكتروني غير صحيحة') };
+    if (password.length < 6 || password.length > 128)
+      return { error: new Error('كلمة المرور غير صالحة') };
+
+    const rateCheck = checkLoginRateLimit();
+    if (!rateCheck.allowed)
+      return { error: new Error(`تم تجاوز عدد المحاولات. حاول بعد ${rateCheck.waitSeconds} ثانية`) };
+
+    const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+    recordLoginAttempt(!error);
     if (error) return { error };
-    if (data.user && !data.user.email_confirmed_at) {
-      await supabase.auth.signOut();
-      return { error: new Error('يرجى تأكيد بريدك الإلكتروني أولاً — تحقق من صندوق الوارد') };
+
+    if (currentEmailRef.current && currentEmailRef.current !== cleanEmail) {
+      clearLSCache();
+      profileCache.current = null;
     }
+
     return { error: null };
   }, []);
 
+  // ─── signUp ───────────────────────────────────────────────────────────────────
   const signUp = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password });
+    const cleanEmail = email.trim().toLowerCase();
+    if (!EMAIL_REGEX.test(cleanEmail) || cleanEmail.length > 254)
+      return { error: new Error('صيغة البريد الإلكتروني غير صحيحة') };
+    if (password.length < 8 || password.length > 128)
+      return { error: new Error('كلمة المرور يجب أن تكون 8 أحرف على الأقل') };
+
+    const { error } = await supabase.auth.signUp({ email: cleanEmail, password });
     return { error };
   }, []);
 
+  // ─── signOut ──────────────────────────────────────────────────────────────────
   const signOut = useCallback(async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) console.error('SignOut error (safe to ignore):', error);
-    currentEmailRef.current = null;
-    profileCache.current = null;
-    isFetching.current = false;
+    await supabase.auth.signOut();
     clearLSCache();
+    profileCache.current    = null;
+    currentEmailRef.current = null;
+    isFetching.current      = false;
+    setUser(null);
+    setSession(null);
     setEmployeeProfile(null);
     setUserProfile(null);
     setHasSession(false);
-    setSession(null);
-    setUser(null);
     setLoading(false);
     setProfileLoading(false);
   }, []);
 
-  const isAdmin = employeeProfile?.employee_role?.toLowerCase()?.trim() === 'admin'
-    && (employeeProfile?.is_active === true || employeeProfile?.is_active as any === 'true');
-  const isEmployee = employeeProfile?.employee_role?.toLowerCase()?.trim() === 'employee'
-    && employeeProfile?.is_active === true;
+  // ─── Computed roles ───────────────────────────────────────────────────────────
+  const isAdmin = !!employeeProfile &&
+    employeeProfile.employee_role?.toLowerCase().trim() === 'admin' &&
+    employeeProfile.is_active === true;
+
+  const isEmployee = !!employeeProfile &&
+    employeeProfile.employee_role?.toLowerCase().trim() === 'employee' &&
+    employeeProfile.is_active === true;
+
   const isClient = !isAdmin && !isEmployee && !!user;
 
+  // ─── Value ────────────────────────────────────────────────────────────────────
   const value: UseAuthReturn = {
-    user, session, loading, profileLoading, hasSession,
-    isAdmin, isEmployee, isClient,
+    user,
+    session,
+    userProfile,
+    employeeProfile,
+    isAdmin,
+    isEmployee,
+    isClient,
+    loading,
+    profileLoading,
+    hasSession,
     showAdminDashboard: isAdmin || isEmployee,
-    showUserOrders: isClient,
-    signIn, signUp, signOut, refreshProfile,
+    showUserOrders:     isClient,
+    signIn,
+    signUp,
+    signOut,
+    refreshProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ useAuth Hook ════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export function useAuth(): UseAuthReturn {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be wrapped in <AuthProvider>');
+  if (!ctx) throw new Error('useAuth يجب أن يُستخدم داخل <AuthProvider>');
   return ctx;
 }
