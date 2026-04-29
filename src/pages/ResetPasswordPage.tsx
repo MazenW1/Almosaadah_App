@@ -1,10 +1,9 @@
-// components/ResetPasswordPage.tsx
+// pages/ResetPasswordPage.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // صفحة تغيير كلمة المرور — يفتحها المستخدم من الرابط في البريد
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { getPasswordStrength } from '../lib/passwordReset';
-import { getAuthLayout } from './AuthLayout';
 
 interface ResetPasswordPageProps {
   onSuccess?: () => void;
@@ -29,38 +28,45 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
   const [showConfirm, setShowConfirm] = useState(false);
 
   // ══════════════════════════════════════════════════════════════════════════════
-  // التحقق من الرابط عند فتح الصفحة
+  // ✅ التحقق من الرابط عند فتح الصفحة — مصحَّح
   // ══════════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     const verifyToken = async () => {
       try {
-        // Supabase يضع token في hash fragment #/reset-password?token=xxx
-        // نحتاج نقرأه من URL params
-        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-        const token = params.get('token');
-        const type = params.get('type');
+        const { supabase } = await import('../lib/supabase');
 
-        if (!token || type !== 'recovery') {
-          // محاولة قراءة من query params كمان
-          const qParams = new URLSearchParams(window.location.search);
-          const qToken = qParams.get('token');
-          if (!qToken) {
-            setTokenValid(false);
-            setTokenError('الرابط غير صالح. يرجى طلب رابط جديد من صفحة نسيت كلمة المرور');
-            setLoading(false);
-            return;
-          }
+        // Supabase يضع التوكن في hash fragment بهذا الشكل:
+        // https://almosaadah.sa/#access_token=xxx&refresh_token=yyy&type=recovery
+        const hash = window.location.hash.replace('#', '');
+        const hashParams = new URLSearchParams(hash);
+
+        const accessToken  = hashParams.get('access_token');
+        const refreshToken = hashParams.get('refresh_token') || '';
+        const type         = hashParams.get('type');
+
+        if (!accessToken || type !== 'recovery') {
+          setTokenValid(false);
+          setTokenError('الرابط غير صالح. يرجى طلب رابط جديد من صفحة نسيت كلمة المرور');
+          setLoading(false);
+          return;
         }
 
-        // نحاول نستخدم Supabase auth helper
-        const { supabase } = await import('../lib/supabase');
-        const { error } = await supabase.auth.updateUser({ password: 'temp_check_' + Date.now() }, {
-          gotrue_meta_security: {
-            challenge: token,
-          },
-        }).catch(() => ({ error: null }));
+        // نعيّن الـ session يدوياً باستخدام التوكن من الرابط
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token:  accessToken,
+          refresh_token: refreshToken,
+        });
 
-        // إذا صار error "invalid token" فهو مش صالح
+        if (sessionError) {
+          setTokenValid(false);
+          setTokenError('الرابط منتهي الصلاحية. يرجى طلب رابط جديد');
+          setLoading(false);
+          return;
+        }
+
+        // نظّف الـ hash من الـ URL بعد قراءته
+        window.history.replaceState(null, '', window.location.pathname + '#/reset-password');
+
         setTokenValid(true);
         setLoading(false);
       } catch (err: any) {
@@ -81,7 +87,6 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
     e.preventDefault();
     setError(null);
 
-    // التحقق من كلمة المرور
     const strength = getPasswordStrength(password);
     if (strength.level < 2) {
       setError('يرجى استخدام كلمة مرور أقوى');
@@ -108,7 +113,6 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
       }
 
       setSuccess(true);
-      // نوجه المستخدم لتسجيل الدخول بعد 2 ثانية
       setTimeout(() => {
         onSuccess?.();
       }, 2500);
@@ -123,6 +127,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
   // ══════════════════════════════════════════════════════════════════════════════
   const strength = getPasswordStrength(password);
 
+  // ── Loading ──
   if (loading) {
     return (
       <div className="rp-page">
@@ -137,6 +142,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
     );
   }
 
+  // ── Invalid Token ──
   if (tokenValid === false) {
     return (
       <div className="rp-page">
@@ -148,7 +154,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
           <h2 className="rp-title">الرابط غير صالح</h2>
           <p className="rp-subtitle">{tokenError || 'هذا الرابط غير صالح أو منتهي الصلاحية'}</p>
           {onBack && (
-            <button className="rp-btn-primary" onClick={onBack}>
+            <button className="rp-btn-primary" onClick={onBack} style={{ marginTop: '24px' }}>
               <i className="fas fa-key" />
               طلب رابط جديد
             </button>
@@ -158,6 +164,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
     );
   }
 
+  // ── Success ──
   if (success) {
     return (
       <div className="rp-page">
@@ -176,6 +183,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
     );
   }
 
+  // ── Main Form ──
   return (
     <div className="rp-page">
       <style>{STYLES}</style>
@@ -310,7 +318,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Styles ══════════════════════════════════════════════════════════════════════
+// ═══ Styles
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const STYLES = `
