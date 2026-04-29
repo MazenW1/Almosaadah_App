@@ -46,7 +46,13 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
       let params: URLSearchParams;
       
       if (fullHash.includes('access_token')) {
-        params = new URLSearchParams(fullHash.replace('#', '').replace('/reset-password?', ''));
+  // نحذف أي شيء قبل علامة ? أو قبل access_token مباشرة
+        const hashContent = fullHash.startsWith('#') ? fullHash.slice(1) : fullHash;
+        // نأخذ الجزء من access_token فصاعداً
+        const tokenStart = hashContent.indexOf('access_token');
+        params = new URLSearchParams(
+          tokenStart >= 0 ? hashContent.slice(tokenStart) : hashContent
+        );
       } else if (search.includes('access_token')) {
         params = new URLSearchParams(search);
       } else {
