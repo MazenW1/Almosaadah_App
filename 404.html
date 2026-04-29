@@ -3,14 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <script>
-      // GitHub Pages SPA fix — يحول الـ URL لـ hash ويرجع للـ index
-      var path = window.location.pathname;
-      var search = window.location.search;
-      var hash = window.location.hash;
-      window.location.replace(
-        window.location.origin + '/#' + path + search + hash
-      );
-    </script>
+  var path = window.location.pathname;
+  var search = window.location.search;
+  var hash = window.location.hash;
+
+  // إذا كان الرابط مسار عادي (مثل /reset-password)
+  // حوّله لـ hash routing بدون تكرار #
+  var newHash = '#' + path + search;
+  
+  window.location.replace(
+    window.location.origin + '/' + newHash + hash
+  );
+</script>
   </head>
   <body></body>
 </html>
