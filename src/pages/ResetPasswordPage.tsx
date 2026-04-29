@@ -31,55 +31,66 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
   // ✅ التحقق من الرابط عند فتح الصفحة — مصحَّح
   // ══════════════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    const verifyToken = async () => {
-      try {
-        const { supabase } = await import('../lib/supabase');
+  const verifyToken = async () => {
+    try {
+      const { supabase } = await import('../lib/supabase');
 
-        // Supabase يضع التوكن في hash fragment بهذا الشكل:
-        // https://almosaadah.sa/#access_token=xxx&refresh_token=yyy&type=recovery
-        const hash = window.location.hash.replace('#', '');
-        const hashParams = new URLSearchParams(hash);
-
-        const accessToken  = hashParams.get('access_token');
-        const refreshToken = hashParams.get('refresh_token') || '';
-        const type         = hashParams.get('type');
-
-        if (!accessToken || type !== 'recovery') {
-          setTokenValid(false);
-          setTokenError('الرابط غير صالح. يرجى طلب رابط جديد من صفحة نسيت كلمة المرور');
-          setLoading(false);
-          return;
-        }
-
-        // نعيّن الـ session يدوياً باستخدام التوكن من الرابط
-        const { error: sessionError } = await supabase.auth.setSession({
-          access_token:  accessToken,
-          refresh_token: refreshToken,
-        });
-
-        if (sessionError) {
-          setTokenValid(false);
-          setTokenError('الرابط منتهي الصلاحية. يرجى طلب رابط جديد');
-          setLoading(false);
-          return;
-        }
-
-        // نظّف الـ hash من الـ URL بعد قراءته
-        window.history.replaceState(null, '', window.location.pathname + '#/reset-password');
-
-        setTokenValid(true);
-        setLoading(false);
-      } catch (err: any) {
-        console.error('[ResetPasswordPage] verify error:', err);
+      // قراءة من كل الاحتمالات
+      const fullHash = window.location.hash;
+      const search = window.location.search;
+      
+      // احتمال 1: #access_token=xxx&type=recovery
+      // احتمال 2: #/reset-password?access_token=xxx
+      // احتمال 3: ?access_token=xxx (query params)
+      
+      let params: URLSearchParams;
+      
+      if (fullHash.includes('access_token')) {
+        params = new URLSearchParams(fullHash.replace('#', '').replace('/reset-password?', ''));
+      } else if (search.includes('access_token')) {
+        params = new URLSearchParams(search);
+      } else {
         setTokenValid(false);
-        setTokenError('فشل في التحقق من الرابط');
+        setTokenError('الرابط غير صالح. يرجى طلب رابط جديد');
         setLoading(false);
+        return;
       }
-    };
 
-    verifyToken();
-  }, []);
+      const accessToken  = params.get('access_token');
+      const refreshToken = params.get('refresh_token') || '';
+      const type         = params.get('type');
 
+      if (!accessToken || type !== 'recovery') {
+        setTokenValid(false);
+        setTokenError('الرابط غير صالح. يرجى طلب رابط جديد');
+        setLoading(false);
+        return;
+      }
+
+      const { error } = await supabase.auth.setSession({
+        access_token:  accessToken,
+        refresh_token: refreshToken,
+      });
+
+      if (error) {
+        setTokenValid(false);
+        setTokenError('الرابط منتهي الصلاحية. يرجى طلب رابط جديد');
+        setLoading(false);
+        return;
+      }
+
+      window.history.replaceState(null, '', window.location.pathname + '#/reset-password');
+      setTokenValid(true);
+      setLoading(false);
+    } catch (err: any) {
+      setTokenValid(false);
+      setTokenError('فشل في التحقق من الرابط');
+      setLoading(false);
+    }
+  };
+
+  verifyToken();
+}, []);
   // ══════════════════════════════════════════════════════════════════════════════
   // تحديث كلمة المرور
   // ══════════════════════════════════════════════════════════════════════════════
