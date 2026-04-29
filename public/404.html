@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script>
+      // GitHub Pages SPA fix — يحول الـ URL لـ hash ويرجع للـ index
+      var path = window.location.pathname;
+      var search = window.location.search;
+      var hash = window.location.hash;
+      window.location.replace(
+        window.location.origin + '/#' + path + search + hash
+      );
+    </script>
+  </head>
+  <body></body>
+</html>

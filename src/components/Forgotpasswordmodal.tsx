@@ -1,6 +1,6 @@
 // components/ForgotPasswordModal.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// نافذة "نسيت كلمة المرور" — ترسل بريد OTP لإعادة تعيين كلمة المرور
+// نافذة "نسيت كلمة المرور" — ترسل رابط إعادة تعيين كلمة المرور
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
@@ -20,19 +20,16 @@ export function ForgotPasswordModal({
   onSwitchToLogin,
   onSwitchToRegister,
 }: ForgotPasswordModalProps) {
-  // ══════════════════════════════════════════════════════════════════════════════
-  // Auth hook — يوفّر requestPasswordReset
-  // ══════════════════════════════════════════════════════════════════════════════
   const { requestPasswordReset } = useAuth();
+
   // ══════════════════════════════════════════════════════════════════════════════
   // State
   // ══════════════════════════════════════════════════════════════════════════════
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [step, setStep] = useState<Step>('email');
-  const [countdown, setCountdown] = useState(0);
-  const [lastSentTime, setLastSentTime] = useState<number | null>(null);
+  const [email, setEmail]           = useState('');
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const [step, setStep]             = useState<Step>('email');
+  const [countdown, setCountdown]   = useState(0);
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Reset on open
@@ -68,13 +65,12 @@ export function ForgotPasswordModal({
   }, [isOpen, onClose]);
 
   // ══════════════════════════════════════════════════════════════════════════════
-  // Submit — أرسل بريد الاستعادة
+  // Submit
   // ══════════════════════════════════════════════════════════════════════════════
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // التحقق من البريد
     const emailRegex = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
     if (!email.trim() || !emailRegex.test(email)) {
       setError('يرجى إدخال بريد إلكتروني صحيح');
@@ -86,25 +82,23 @@ export function ForgotPasswordModal({
       const result = await requestPasswordReset(email.trim().toLowerCase());
 
       if (!result.success) {
+        // ✅ لو البريد مو مسجل يظهر الخطأ في نفس الصفحة بدون ما ينتقل لـ step error
         setError(result.error || 'حدث خطأ أثناء الإرسال');
-        setStep('error');
         setLoading(false);
         return;
       }
 
       setStep('sent');
-      setLastSentTime(Date.now());
-      setCountdown(60); // 60 ثانية بين كل محاولة
+      setCountdown(60);
     } catch (err: any) {
       setError(err.message || 'حدث خطأ غير متوقع');
-      setStep('error');
     } finally {
       setLoading(false);
     }
   };
 
   // ══════════════════════════════════════════════════════════════════════════════
-  // Resend — إعادة إرسال
+  // Resend
   // ══════════════════════════════════════════════════════════════════════════════
   const handleResend = async () => {
     if (countdown > 0 || loading) return;
@@ -127,9 +121,6 @@ export function ForgotPasswordModal({
     }
   };
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // Retry after error
-  // ══════════════════════════════════════════════════════════════════════════════
   const handleRetry = () => {
     setStep('email');
     setError(null);
@@ -149,9 +140,7 @@ export function ForgotPasswordModal({
             <i className="fas fa-times" />
           </button>
 
-          {/* ══════════════════════════════════════════════════════════════════════ */}
-          {/* STEP 1: إدخال البريد الإلكتروني */}
-          {/* ══════════════════════════════════════════════════════════════════════ */}
+          {/* ══ STEP 1: إدخال البريد ══ */}
           {step === 'email' && (
             <>
               <div className="fp-icon-wrap">
@@ -183,6 +172,7 @@ export function ForgotPasswordModal({
                   </div>
                 </div>
 
+                {/* ✅ رسالة الخطأ تظهر هنا (بما فيها "البريد غير مسجل") */}
                 {error && (
                   <div className="fp-error">
                     <i className="fas fa-exclamation-circle" />
@@ -194,7 +184,7 @@ export function ForgotPasswordModal({
                   {loading ? (
                     <>
                       <div className="fp-spinner" />
-                      جاري الإرسال...
+                      جاري التحقق...
                     </>
                   ) : (
                     <>
@@ -225,9 +215,7 @@ export function ForgotPasswordModal({
             </>
           )}
 
-          {/* ══════════════════════════════════════════════════════════════════════ */}
-          {/* STEP 2: تم الإرسال بنجاح */}
-          {/* ══════════════════════════════════════════════════════════════════════ */}
+          {/* ══ STEP 2: تم الإرسال ══ */}
           {step === 'sent' && (
             <>
               <div className="fp-icon-wrap sent">
@@ -285,13 +273,10 @@ export function ForgotPasswordModal({
                 العودة لتسجيل الدخول
               </button>
 
-              {/* شريط التقدم */}
               <div className="fp-timer-bar">
                 <div
                   className="fp-timer-fill"
-                  style={{
-                    width: countdown > 0 ? `${((60 - countdown) / 60) * 100}%` : '100%'
-                  }}
+                  style={{ width: countdown > 0 ? `${((60 - countdown) / 60) * 100}%` : '100%' }}
                 />
               </div>
               {countdown > 0 && (
@@ -300,9 +285,7 @@ export function ForgotPasswordModal({
             </>
           )}
 
-          {/* ══════════════════════════════════════════════════════════════════════ */}
-          {/* STEP 3: خطأ — يمكنه إعادة المحاولة */}
-          {/* ══════════════════════════════════════════════════════════════════════ */}
+          {/* ══ STEP 3: خطأ ══ */}
           {step === 'error' && (
             <>
               <div className="fp-icon-wrap error">
@@ -330,7 +313,7 @@ export function ForgotPasswordModal({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Styles ══════════════════════════════════════════════════════════════════════
+// ═══ Styles
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const STYLES = `
@@ -430,18 +413,14 @@ const STYLES = `
     box-shadow: 0 12px 35px rgba(16, 185, 129, 0.35);
   }
 
-  .fp-icon-wrap.sent::after {
-    border-color: rgba(16, 185, 129, 0.25);
-  }
+  .fp-icon-wrap.sent::after { border-color: rgba(16, 185, 129, 0.25); }
 
   .fp-icon-wrap.error {
     background: linear-gradient(135deg, #dc2626, #ef4444);
     box-shadow: 0 12px 35px rgba(239, 68, 68, 0.35);
   }
 
-  .fp-icon-wrap.error::after {
-    border-color: rgba(239, 68, 68, 0.25);
-  }
+  .fp-icon-wrap.error::after { border-color: rgba(239, 68, 68, 0.25); }
 
   @keyframes fp-spin {
     from { transform: rotate(0deg); }
@@ -485,13 +464,9 @@ const STYLES = `
     gap: 6px;
   }
 
-  .fp-label i {
-    color: #0891b2;
-  }
+  .fp-label i { color: #0891b2; }
 
-  .fp-input-wrap {
-    position: relative;
-  }
+  .fp-input-wrap { position: relative; }
 
   .fp-input {
     width: 100%;
@@ -526,9 +501,7 @@ const STYLES = `
     transition: color 0.25s;
   }
 
-  .fp-input:focus ~ .fp-input-icon {
-    color: #06b6d4;
-  }
+  .fp-input:focus ~ .fp-input-icon { color: #06b6d4; }
 
   .fp-error {
     display: flex;

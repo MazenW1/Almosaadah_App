@@ -1,6 +1,6 @@
 // lib/passwordReset.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// helpers لاستعادة كلمة المرور — يرسل بريد OTP ويؤكد الرمز
+// helpers لاستعادة كلمة المرور
 // ─────────────────────────────────────────────────────────────────────────────
 import { supabase } from './supabase';
 
@@ -10,25 +10,38 @@ export interface ResetPasswordResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Step 1 — أرسل رمز OTP إلى بريد المستخدم ════════════════════════════════
+// ═══ Step 1 — أرسل رابط الاستعادة إلى بريد المستخدم ═════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function requestPasswordReset(email: string): Promise<ResetPasswordResult> {
   try {
-    // التحقق من البريد
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // ✅ التحقق من صيغة البريد
     const emailRegex = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(normalizedEmail)) {
       return { success: false, error: 'صيغة البريد الإلكتروني غير صحيحة' };
     }
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-      redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/reset-password`,
+    // ✅ التحقق من وجود البريد في قاعدة البيانات قبل الإرسال
+    const { data: userExists } = await supabase
+      .from('user')
+      .select('user_id')
+      .eq('user_email', normalizedEmail)
+      .maybeSingle();
+
+    if (!userExists) {
+      return { success: false, error: 'هذا البريد غير مسجّل في النظام' };
+    }
+
+    // ✅ إرسال رابط الاستعادة
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/#/reset-password`,
     });
 
     if (error) {
-      // رسائل خطأ واضحة للمستخدم
-      if (error.message.includes('not found') || error.message.includes('not_found')) {
-        return { success: false, error: 'هذا البريد غير مسجّل في النظام' };
+      if (error.message.includes('rate') || error.message.includes('limit')) {
+        return { success: false, error: 'تم إرسال رسائل كثيرة، حاول بعد قليل' };
       }
       return { success: false, error: error.message || 'حدث خطأ أثناء الإرسال' };
     }
@@ -41,39 +54,7 @@ export async function requestPasswordReset(email: string): Promise<ResetPassword
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Step 2 — المستخدم ضغط على الرابط في البريد → يفتح صفحة التغيير ══════════
-// ═══════════════════════════════════════════════════════════════════════════════
-// عندما يفتح المستخدم الرابط، Supabase يعرّف token في URL hash أو query param
-// نستخدم verifySegment أو نتحقق من session
-
-export async function getPasswordResetSession(): Promise<{ hasSession: boolean; error?: string }> {
-  try {
-    // Supabase يعرّف recovery token في URL hash
-    // نحاول استرداد الجلسة
-    const { data, error } = await supabase.auth.getSession();
-
-    if (error) {
-      return { hasSession: false, error: error.message };
-    }
-
-    // التحقق من أن الرابط صالح (token يفترض أن يُنتج session)
-    if (!data.session) {
-      // محاولة تحديث — قد يكون هناك token pending
-      const { error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError) {
-        return { hasSession: false, error: 'الرابط غير صالح أو منتهي الصلاحية' };
-      }
-    }
-
-    const newSession = await supabase.auth.getSession();
-    return { hasSession: !!newSession.data.session };
-  } catch (err: any) {
-    return { hasSession: false, error: 'فشل في التحقق من الرابط' };
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ═══ Step 3 — تحديث كلمة المرور الجديدة ══════════════════════════════════════
+// ═══ Step 2 — تحديث كلمة المرور الجديدة ══════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface UpdatePasswordResult {
@@ -111,10 +92,10 @@ export async function updatePassword(newPassword: string): Promise<UpdatePasswor
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface PasswordStrengthResult {
-  level: number;       // 0-3
+  level: number;   // 0-3
   label: string;
   color: string;
-  score: number;       // 0-100
+  score: number;   // 0-100
   hints: string[];
 }
 
@@ -158,7 +139,6 @@ export function getPasswordStrength(password: string): PasswordStrengthResult {
     hints.push('رمز خاص (!@#$%)');
   }
 
-  // تحديد المستوى
   let level: number;
   let label: string;
   let color: string;
