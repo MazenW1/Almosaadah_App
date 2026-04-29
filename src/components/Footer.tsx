@@ -220,7 +220,7 @@ export function Footer() {
         .footer-tech-badge i { animation: data-blink 1.5s ease infinite; }
       `}</style>
 
-      <footer className="footer-v2">
+      <footer className="footer-v2" id="contact">
         <div className="footer-inner">
 
           {/* Logo */}
