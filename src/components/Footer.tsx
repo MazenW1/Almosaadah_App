@@ -242,7 +242,7 @@ export function Footer() {
           {/* Owner card */}
           <div className="footer-owner-card">
             <span className="footer-owner-label">المالك</span>
-            <span className="footer-owner-name">راكان مطلق مسيفر الجعيد</span>
+            <span className="footer-owner-name">راكان مطلق مسيفر العتيبي</span>
           </div>
 
           {/* Social links */}

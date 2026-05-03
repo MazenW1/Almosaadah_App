@@ -1307,6 +1307,15 @@ export function Header({
                           </div>
                           الوظائف
                         </Link>
+
+                        {(finalIsAdmin || finalIsEmployee) && (
+                          <Link to="/contracts" className="dropdown-item" onClick={() => setIsDropdownOpen(false)}>
+                            <div className="di-icon" style={{ background: 'rgba(234,88,12,0.1)', color: '#ea580c' }}>
+                              <i className="fas fa-file-contract" />
+                            </div>
+                            العقود
+                          </Link>
+                        )}
                         
                         <div className="dropdown-divider" />
 
@@ -1354,22 +1363,35 @@ export function Header({
             </div>
 
             <div className="mobile-nav-list">
-              {navLinks.map((link) => (
-                <button
-                  key={link.href}
-                  className={`mobile-nav-btn${isNavActive(link.href) ? ' active' : ''}`}
-                  onClick={() => handleNavClick(link.href)}
-                >
-                  <div className="mn-icon"><i className={`fas ${link.icon}`} /></div>
-                  {link.label}
-                </button>
-              ))}
+              {navLinks.map((link) => {
+                const iconColors: Record<string, { bg: string; color: string; border: string }> = {
+                  '#home':     { bg: 'rgba(14,165,233,0.12)',  color: '#0ea5e9', border: '1px solid rgba(14,165,233,0.2)'  },
+                  '#services': { bg: 'rgba(20,184,166,0.12)',  color: '#0d9488', border: '1px solid rgba(20,184,166,0.2)'  },
+                  '#products': { bg: 'rgba(16,185,129,0.12)',  color: '#059669', border: '1px solid rgba(16,185,129,0.2)'  },
+                  '#partners': { bg: 'rgba(249,115,22,0.12)',  color: '#ea580c', border: '1px solid rgba(249,115,22,0.2)'  },
+                  '#news':     { bg: 'rgba(239,68,68,0.12)',   color: '#dc2626', border: '1px solid rgba(239,68,68,0.2)'   },
+                  '#stats':    { bg: 'rgba(139,92,246,0.12)',  color: '#7c3aed', border: '1px solid rgba(139,92,246,0.2)'  },
+                };
+                const c = iconColors[link.href] ?? { bg: 'rgba(14,165,233,0.1)', color: '#0284c7', border: '1px solid rgba(14,165,233,0.15)' };
+                return (
+                  <button
+                    key={link.href}
+                    className={`mobile-nav-btn${isNavActive(link.href) ? ' active' : ''}`}
+                    onClick={() => handleNavClick(link.href)}
+                  >
+                    <div className="mn-icon" style={{ background: c.bg, color: c.color, border: c.border }}>
+                      <i className={`fas ${link.icon}`} />
+                    </div>
+                    {link.label}
+                  </button>
+                );
+              })}
               <NavLink
                 to="/events"
                 className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                <div className="mn-icon"><i className="fas fa-calendar-alt" /></div>
+                <div className="mn-icon" style={{ background: 'rgba(20,184,166,0.12)', color: '#0d9488', border: '1px solid rgba(20,184,166,0.2)' }}><i className="fas fa-calendar-alt" /></div>
                 الفعاليات
               </NavLink>
               <NavLink
@@ -1377,7 +1399,7 @@ export function Header({
                 className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                <div className="mn-icon"><i className="fas fa-briefcase" /></div>
+                <div className="mn-icon" style={{ background: 'rgba(99,102,241,0.12)', color: '#4f46e5', border: '1px solid rgba(99,102,241,0.2)' }}><i className="fas fa-briefcase" /></div>
                 الوظائف
               </NavLink>
               <NavLink
@@ -1385,7 +1407,7 @@ export function Header({
                 className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                <div className="mn-icon" style={{ background: 'rgba(139,92,246,0.1)', color: '#7c3aed', border: '1px solid rgba(139,92,246,0.15)' }}><i className="fas fa-project-diagram" /></div>
+                <div className="mn-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#7c3aed', border: '1px solid rgba(139,92,246,0.2)' }}><i className="fas fa-project-diagram" /></div>
                 المشاريع
               </NavLink>
               <NavLink
@@ -1393,9 +1415,19 @@ export function Header({
                 className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                <div className="mn-icon" style={{ background: 'rgba(245,158,11,0.1)', color: '#d97706', border: '1px solid rgba(245,158,11,0.15)' }}><i className="fas fa-star" /></div>
+                <div className="mn-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#d97706', border: '1px solid rgba(245,158,11,0.2)' }}><i className="fas fa-star" /></div>
                 آراء العملاء
               </NavLink>
+              {(finalIsAdmin || finalIsEmployee) && (
+                <NavLink
+                  to="/contracts"
+                  className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                >
+                  <div className="mn-icon" style={{ background: 'rgba(234,88,12,0.12)', color: '#ea580c', border: '1px solid rgba(234,88,12,0.2)' }}><i className="fas fa-file-contract" /></div>
+                  العقود
+                </NavLink>
+              )}
             </div>
 
             <div className="mobile-auth-area">

@@ -20,7 +20,7 @@ export function ForgotPasswordModal({
   onSwitchToLogin,
   onSwitchToRegister,
 }: ForgotPasswordModalProps) {
-  const { requestPasswordReset } = useAuth();
+  const { requestPasswordReset, checkEmailExists } = useAuth();
 
   // ══════════════════════════════════════════════════════════════════════════════
   // State
@@ -79,10 +79,18 @@ export function ForgotPasswordModal({
 
     setLoading(true);
     try {
+      // ── 1) تحقق إذا الإيميل مسجّل قبل الإرسال ──
+      const exists = await checkEmailExists(email.trim().toLowerCase());
+      if (!exists) {
+        setError('هذا البريد الإلكتروني غير مسجّل. تحقق من الكتابة أو أنشئ حساباً جديداً');
+        setLoading(false);
+        return;
+      }
+
+      // ── 2) الإيميل موجود → أرسل رابط الاستعادة ──
       const result = await requestPasswordReset(email.trim().toLowerCase());
 
       if (!result.success) {
-        // ✅ لو البريد مو مسجل يظهر الخطأ في نفس الصفحة بدون ما ينتقل لـ step error
         setError(result.error || 'حدث خطأ أثناء الإرسال');
         setLoading(false);
         return;
@@ -184,7 +192,7 @@ export function ForgotPasswordModal({
                   {loading ? (
                     <>
                       <div className="fp-spinner" />
-                      جاري التحقق...
+                      جاري التحقق من البريد...
                     </>
                   ) : (
                     <>

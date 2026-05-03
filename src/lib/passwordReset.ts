@@ -36,7 +36,7 @@ export async function requestPasswordReset(email: string): Promise<ResetPassword
 
     // ✅ إرسال رابط الاستعادة
     const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-      redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/#/reset-password`,
+      redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/reset-password`,
     });
 
     if (error) {

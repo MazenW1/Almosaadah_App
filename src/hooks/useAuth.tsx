@@ -17,6 +17,7 @@ interface UseAuthReturn {
   employeeProfile: Employee  | null;    // ← بيانات جدول employees
   isAdmin:         boolean;
   isEmployee:      boolean;
+  isAdminOrEmployee: boolean;           // ← shorthand للصفحات المقيّدة (مثل العقود)
   isClient:        boolean;
   loading:         boolean;
   profileLoading:  boolean;
@@ -28,7 +29,8 @@ interface UseAuthReturn {
   signOut:        () => Promise<void>;
   refreshProfile: () => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
-  updatePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  updatePassword:       (newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  checkEmailExists:     (email: string) => Promise<boolean>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -356,16 +358,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               try {
                 const reg = JSON.parse(pending);
                 if (reg.user_id === sess.user.id) {
-                  await supabase.from('user').upsert([{
-                    user_id:          reg.user_id,
-                    association_name: reg.association_name,
-                    user_phone:       reg.user_phone || null,
-                    user_email:       reg.user_email,
-                    license_number:   reg.license_number || null,
-                    entity_type:      reg.entity_type || null,
-                    email_verified:   true,
+                  // insert بدل upsert لكشف تعارض البريد أو الترخيص (unique violation 23505)
+                  const { error: insertError } = await supabase.from('user').insert([{
+                    user_id:           reg.user_id,
+                    association_name:  reg.association_name,
+                    user_phone:        reg.user_phone        || null,
+                    user_email:        reg.user_email,
+                    license_number:    reg.license_number    || null,
+                    entity_type:       reg.entity_type       || null,
+                    email_verified:    true,
                     email_verified_at: new Date().toISOString(),
-                  }], { onConflict: 'user_id' });
+                  }]);
+                  if (insertError) {
+                    if (insertError.code === '23505') {
+                      console.error('[useAuth] تعارض بيانات التسجيل (بريد أو ترخيص مكرر):', insertError.details);
+                    } else {
+                      console.error('[useAuth] خطأ حفظ بيانات المستخدم:', insertError.message);
+                    }
+                  }
                   sessionStorage.removeItem('pending_registration');
                 }
               } catch {}
@@ -472,6 +482,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // ─── checkEmailExists ─────────────────────────────────────────────────────────
+  // يتحقق إذا البريد مسجّل في جدول user أو employees قبل إرسال رابط الاستعادة
+  const checkEmailExists = useCallback(async (email: string): Promise<boolean> => {
+  if (!email || !EMAIL_REGEX.test(email)) return false;
+  const clean = email.trim().toLowerCase();
+  try {
+    const [{ data: userData }, { data: empExists }] = await Promise.all([
+      supabase.from('user').select('user_id').eq('user_email', clean).maybeSingle(),
+      supabase.rpc('check_employee_email_exists', { p_email: clean }),
+    ]);
+    return !!(userData || empExists);
+  } catch {
+    return true;
+  }
+}, []);
+
   // ─── updatePassword ────────────────────────────────────────────────────────────
   // تحديث كلمة المرور (بعد التحقق من الرابط)
   const updatePassword = useCallback(async (newPassword: string) => {
@@ -505,6 +531,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     employeeProfile.employee_role?.toLowerCase().trim() === 'employee' &&
     employeeProfile.is_active === true;
 
+  // أدمن أو موظف — يُستخدم لحماية صفحات العقود وغيرها
+  const isAdminOrEmployee = isAdmin || isEmployee;
+
   const isClient = !isAdmin && !isEmployee && !!user;
 
   // ─── Value ────────────────────────────────────────────────────────────────────
@@ -515,6 +544,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     employeeProfile,
     isAdmin,
     isEmployee,
+    isAdminOrEmployee,
     isClient,
     loading,
     profileLoading,
@@ -527,6 +557,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refreshProfile,
     requestPasswordReset,
     updatePassword,
+    checkEmailExists,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

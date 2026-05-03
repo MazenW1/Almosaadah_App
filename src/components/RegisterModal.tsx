@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import React from 'react';
 interface RegisterModalProps {
   isOpen: boolean;
@@ -63,6 +63,12 @@ export function RegisterModal({
   const [isBlocked, setIsBlocked] = useState(false);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // ── Real-time duplicate check state ──────────────────────────────────────────
+  type FieldStatus = 'idle' | 'checking' | 'ok' | 'taken';
+  const [emailStatus,   setEmailStatus]   = useState<FieldStatus>('idle');
+  const [licenseStatus, setLicenseStatus] = useState<FieldStatus>('idle');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [formData, setFormData] = useState<RegisterData>({
     associationName: '',
     phone: '',
@@ -81,6 +87,8 @@ export function RegisterModal({
       setOtp(['', '', '', '', '', '']);
       setOtpError(null);
       setVerified(false);
+      setEmailStatus('idle');
+      setLicenseStatus('idle');
     }
   }, [isOpen]);
 
@@ -100,6 +108,71 @@ export function RegisterModal({
     }
   }, [step, resendCountdown]);
 
+  // ── Real-time duplicate check via RPC (يتجاوز RLS) ───────────────────────────
+  const checkDuplicates = useCallback(async (email: string, license: string, entityType: string) => {
+    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    const licenseToCheck = entityType !== 'فرد' && license.trim().length >= 1 ? license.trim() : null;
+
+    if (!emailValid && !licenseToCheck) {
+      setEmailStatus('idle');
+      setLicenseStatus('idle');
+      return;
+    }
+
+    if (emailValid)      setEmailStatus('checking');
+    if (licenseToCheck)  setLicenseStatus('checking');
+
+    try {
+      const { supabase: sb } = await import('../lib/supabase');
+      const { data, error } = await sb.rpc('check_email_license_exists', {
+        p_email:   email.trim().toLowerCase(),
+        p_license: licenseToCheck,
+      });
+
+      if (!error && data) {
+        setEmailStatus(emailValid ? (data.email_exists   ? 'taken' : 'ok') : 'idle');
+        setLicenseStatus(licenseToCheck ? (data.license_exists ? 'taken' : 'ok') : 'idle');
+      }
+    } catch {
+      // في حال فشل الـ RPC نعود لـ idle ونتحقق عند الإرسال
+      setEmailStatus('idle');
+      setLicenseStatus('idle');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      checkDuplicates(formData.email, formData.license, formData.entityType);
+    }, 600);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [formData.email, formData.license, formData.entityType, step, checkDuplicates]);
+
+  // ── Real-time check للترخيص في step 1 ────────────────────────────────────────
+  useEffect(() => {
+    if (step !== 1) return;
+    if (formData.entityType === 'فرد' || formData.license.trim().length < 1) {
+      setLicenseStatus('idle');
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setLicenseStatus('checking');
+      try {
+        const { supabase: sb } = await import('../lib/supabase');
+        const { data } = await sb.rpc('check_email_license_exists', {
+          p_email:   '',
+          p_license: formData.license.trim(),
+        });
+        setLicenseStatus(data?.license_exists ? 'taken' : 'ok');
+      } catch {
+        setLicenseStatus('idle');
+      }
+    }, 600);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [formData.license, formData.entityType, step]);
+
   const handleChange = (field: keyof RegisterData, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (error) setError(null);
@@ -112,6 +185,8 @@ export function RegisterModal({
     if (!entityType || !ALLOWED_ENTITY_TYPES.includes(entityType)) { setError('يرجى اختيار نوع الكيان'); return false; }
     if (!/^05[0-9]{8}$/.test(phone)) { setError('رقم الجوال غير صحيح (يجب أن يبدأ بـ 05 ويكون 10 أرقام)'); return false; }
     if (entityType !== 'فرد' && (license.trim().length < 1 || license.trim().length > 10)) { setError('رقم الترخيص يجب أن يكون بين 1 و 10 أرقام'); return false; }
+    if (licenseStatus === 'taken')    { setError('رقم الترخيص مسجل مسبقاً، يرجى التحقق'); return false; }
+    if (licenseStatus === 'checking') { setError('جارٍ التحقق من رقم الترخيص، يرجى الانتظار'); return false; }
     return true;
   };
 
@@ -141,8 +216,35 @@ export function RegisterModal({
     setError(null);
     if (!validateStep2()) return;
 
+    // منع الإرسال إذا كان البريد أو الترخيص مسجلاً (من الـ real-time check)
+    if (emailStatus === 'taken') {
+      setError('هذا البريد الإلكتروني مسجل مسبقاً');
+      return;
+    }
+    if (licenseStatus === 'taken') {
+      setError('رقم الترخيص مسجل مسبقاً');
+      return;
+    }
+
+    // لو الـ check لم ينتهِ بعد، ننتظر نتيجته أولاً
+    if (emailStatus === 'checking' || licenseStatus === 'checking') {
+      setError('جارٍ التحقق من البيانات، يرجى الانتظار لحظة...');
+      return;
+    }
+
     setLoading(true);
     try {
+      // تحقق نهائي عبر RPC قبل الإرسال (طبقة أمان إضافية)
+      const { supabase: sb } = await import('../lib/supabase');
+      const { data: check } = await sb.rpc('check_email_license_exists', {
+        p_email:   formData.email.trim().toLowerCase(),
+        p_license: formData.entityType !== 'فرد' && formData.license.trim()
+          ? formData.license.trim()
+          : null,
+      });
+      if (check?.email_exists)   { setError('هذا البريد الإلكتروني مسجل مسبقاً'); return; }
+      if (check?.license_exists) { setError('رقم الترخيص مسجل مسبقاً');           return; }
+
       await onSubmitRegister(formData);
       // Account created — now move to OTP verification
       setStep(3);
@@ -1017,10 +1119,28 @@ export function RegisterModal({
                         onBlur={() => setFocusedField(null)}
                         className="rm-input"
                         maxLength={10}
+                        style={{
+                          borderColor:
+                            licenseStatus === 'taken'    ? 'rgba(255,77,109,0.6)' :
+                            licenseStatus === 'ok'       ? 'rgba(0,180,100,0.5)'  :
+                            licenseStatus === 'checking' ? 'rgba(0,140,255,0.4)'  : undefined,
+                        }}
                       />
-                      <p style={{ fontSize: 11, color: formData.license.length >= 1 ? '#10b981' : '#94a3b8', margin: '3px 0 0', textAlign: 'left' }}>
-                        {formData.license.length}/10
-                      </p>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '3px 0 0' }}>
+                        {licenseStatus === 'checking' && (
+                          <p style={{ fontSize: 11, color: '#0078ff', margin: 0, fontWeight: 600 }}>⏳ جارٍ التحقق...</p>
+                        )}
+                        {licenseStatus === 'taken' && (
+                          <p style={{ fontSize: 11, color: '#cc2244', margin: 0, fontWeight: 700 }}>✗ رقم الترخيص مسجل مسبقاً</p>
+                        )}
+                        {licenseStatus === 'ok' && (
+                          <p style={{ fontSize: 11, color: '#007a3d', margin: 0, fontWeight: 700 }}>✓ رقم الترخيص متاح</p>
+                        )}
+                        {licenseStatus === 'idle' && <span />}
+                        <p style={{ fontSize: 11, color: formData.license.length >= 1 ? '#10b981' : '#94a3b8', margin: 0, textAlign: 'left' }}>
+                          {formData.license.length}/10
+                        </p>
+                      </div>
                     </div>
                     )}
 
@@ -1056,9 +1176,24 @@ export function RegisterModal({
                         onFocus={() => setFocusedField('email')}
                         onBlur={() => setFocusedField(null)}
                         className="rm-input"
-                        style={{ direction: 'ltr', textAlign: 'right' }}
+                        style={{
+                          direction: 'ltr', textAlign: 'right',
+                          borderColor:
+                            emailStatus === 'taken'    ? 'rgba(255,77,109,0.6)' :
+                            emailStatus === 'ok'       ? 'rgba(0,180,100,0.5)'  :
+                            emailStatus === 'checking' ? 'rgba(0,140,255,0.4)'  : undefined,
+                        }}
                         autoComplete="email"
                       />
+                      {emailStatus === 'checking' && (
+                        <p style={{ fontSize: 11, color: '#0078ff', margin: '4px 0 0', fontWeight: 600 }}>⏳ جارٍ التحقق...</p>
+                      )}
+                      {emailStatus === 'taken' && (
+                        <p style={{ fontSize: 11, color: '#cc2244', margin: '4px 0 0', fontWeight: 700 }}>✗ هذا البريد مسجل مسبقاً</p>
+                      )}
+                      {emailStatus === 'ok' && (
+                        <p style={{ fontSize: 11, color: '#007a3d', margin: '4px 0 0', fontWeight: 700 }}>✓ البريد متاح</p>
+                      )}
                     </div>
 
                     {/* Password */}

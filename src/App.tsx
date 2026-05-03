@@ -37,6 +37,7 @@ import ProjectsPage      from './pages/ProjectsPage';
 import EventsPage        from './pages/EventsPage';
 import JobsPage          from './pages/JobsPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import Contracts from './pages/Contracts';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ ProtectedRoute ══════════════════════════════════════════════════════════════
@@ -360,6 +361,7 @@ function AppInner() {
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/profile"   element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+          <Route path="/contracts" element={<ProtectedRoute><Contracts /></ProtectedRoute>} />
           <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
 

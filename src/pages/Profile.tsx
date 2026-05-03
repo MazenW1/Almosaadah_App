@@ -405,7 +405,9 @@ export function Profile() {
   // Combined feed sorted by date
   const feedItems = [
     ...myProjects.map(p => ({ type: 'project' as const, data: p, date: new Date(p.created_at) })),
-    ...myReviews.map(r => ({ type: 'review' as const, data: r, date: new Date(r.created_at) })),
+    ...myReviews.map(r  => ({ type: 'review'  as const, data: r, date: new Date(r.created_at) })),
+    ...myEvents.map(e   => ({ type: 'event'   as const, data: e, date: new Date(e.created_at) })),
+    ...myJobs.map(j     => ({ type: 'job'     as const, data: j, date: new Date(j.created_at) })),
   ].sort((a, b) => b.date.getTime() - a.date.getTime());
 
   const { isDarkMode: dm } = useDarkMode();
@@ -1358,7 +1360,7 @@ export function Profile() {
             {/* ===== FEED TAB ===== */}
             {activeTab === 'feed' && isClient && (
               <div>
-                {(loadingReviews || loadingProjects) ? (
+                {(loadingReviews || loadingProjects || loadingEvents || loadingJobs) ? (
                   <div>
                     {[1, 2, 3].map(i => (
                       <div key={i} className="post-card" style={{ padding: '20px', animationDelay: `${i * 0.1}s` }}>
@@ -1377,7 +1379,7 @@ export function Profile() {
                   <div className="empty-state">
                     <span className="empty-icon">📭</span>
                     <p style={{ fontWeight: 700, fontSize: '16px', marginBottom: 8 }}>لا توجد منشورات بعد</p>
-                    <p style={{ fontSize: 14 }}>أضف مشروعًا أو رأيًا وسيظهر هنا</p>
+                    <p style={{ fontSize: 14 }}>أضف مشروعًا أو رأيًا أو فعالية أو وظيفة وسيظهر هنا</p>
                     <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
                       <button className="action-btn primary" onClick={() => navigate('/projects')}>
                         <i className="fas fa-plus" /> مشروع جديد
@@ -1391,8 +1393,13 @@ export function Profile() {
                   feedItems.map((item, idx) => (
                     <div key={`${item.type}-${item.data.id}`} className="post-card" style={{ animationDelay: `${idx * 0.06}s` }}>
                       <div className="post-header">
-                        <div className="post-avatar" style={{ background: item.type === 'project' ? '#dbeafe' : '#fef9c3' }}>
-                          {item.type === 'project' ? '📁' : '✍️'}
+                        <div className="post-avatar" style={{
+                          background:
+                            item.type === 'project' ? '#dbeafe' :
+                            item.type === 'review'  ? '#fef9c3' :
+                            item.type === 'event'   ? '#dcfce7' : '#f3e8ff'
+                        }}>
+                          {item.type === 'project' ? '📁' : item.type === 'review' ? '✍️' : item.type === 'event' ? '📅' : '💼'}
                         </div>
                         <div className="post-meta">
                           <div className="post-name">{displayName}</div>
@@ -1401,13 +1408,13 @@ export function Profile() {
                           </div>
                         </div>
                         {item.type === 'project' ? (
-                          <span className="post-type-badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>
-                            📁 مشروع
-                          </span>
+                          <span className="post-type-badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>📁 مشروع</span>
+                        ) : item.type === 'review' ? (
+                          <span className="post-type-badge" style={{ background: '#fef9c3', color: '#a16207' }}>✍️ رأي</span>
+                        ) : item.type === 'event' ? (
+                          <span className="post-type-badge" style={{ background: '#dcfce7', color: '#15803d' }}>📅 فعالية</span>
                         ) : (
-                          <span className="post-type-badge" style={{ background: '#fef9c3', color: '#a16207' }}>
-                            ✍️ رأي
-                          </span>
+                          <span className="post-type-badge" style={{ background: '#f3e8ff', color: '#7c3aed' }}>💼 وظيفة</span>
                         )}
                       </div>
 
@@ -1451,7 +1458,7 @@ export function Profile() {
                               )}
                             </>
                           );
-                        })() : (() => {
+                        })() : item.type === 'review' ? (() => {
                           const r = item.data as Review;
                           return (
                             <>
@@ -1465,6 +1472,33 @@ export function Profile() {
                               )}
                             </>
                           );
+                        })() : item.type === 'event' ? (() => {
+                          const e = item.data as Event;
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <p className="post-text" style={{ margin: 0, fontWeight: 800, fontSize: 16, color: dm ? '#f1f5f9' : '#0f172a' }}>
+                                {e.event_name}
+                              </p>
+                              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                                {e.city && <span style={{ fontSize: 13, color: dm ? '#94a3b8' : '#64748b' }}>📍 {e.city}</span>}
+                                {e.event_date && <span style={{ fontSize: 13, color: dm ? '#94a3b8' : '#64748b' }}>🗓 {new Date(e.event_date).toLocaleDateString('ar-SA')}</span>}
+                                {e.event_type && <span style={{ fontSize: 13, color: dm ? '#94a3b8' : '#64748b' }}>🏷 {e.event_type}</span>}
+                              </div>
+                            </div>
+                          );
+                        })() : (() => {
+                          const j = item.data as Job;
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <p className="post-text" style={{ margin: 0, fontWeight: 800, fontSize: 16, color: dm ? '#f1f5f9' : '#0f172a' }}>
+                                {j.job_title}
+                              </p>
+                              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                                {j.city && <span style={{ fontSize: 13, color: dm ? '#94a3b8' : '#64748b' }}>📍 {j.city}</span>}
+                                {j.work_type && <span style={{ fontSize: 13, color: dm ? '#94a3b8' : '#64748b' }}>💼 {j.work_type}</span>}
+                              </div>
+                            </div>
+                          );
                         })()}
                       </div>
 
@@ -1472,29 +1506,44 @@ export function Profile() {
                         {item.type === 'project' ? (() => {
                           const statusInfo = getStatusConfig((item.data as Project).status);
                           return (
-                            <span style={{
-                              fontSize: 12, fontWeight: 700,
-                              padding: '5px 12px', borderRadius: 20,
-                              background: statusInfo.bg, color: statusInfo.color,
-                              display: 'flex', alignItems: 'center', gap: 5,
-                            }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: statusInfo.bg, color: statusInfo.color, display: 'flex', alignItems: 'center', gap: 5 }}>
                               <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusInfo.dot, display: 'inline-block' }} />
                               {statusInfo.label}
                             </span>
                           );
-                        })() : (
-                          <span style={{
-                            fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20,
-                            background: (item.data as Review).is_active ? '#dcfce7' : '#fef9c3',
-                            color: (item.data as Review).is_active ? '#15803d' : '#a16207',
-                          }}>
-                            {(item.data as Review).is_active ? '✓ منشور' : '⏳ قيد المراجعة'}
-                          </span>
-                        )}
+                        })() : item.type === 'review' ? (() => {
+                          const r = item.data as Review;
+                          return (
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: r.is_active ? '#dcfce7' : '#fef9c3', color: r.is_active ? '#15803d' : '#a16207' }}>
+                              {r.is_active ? '✓ منشور' : '⏳ قيد المراجعة'}
+                            </span>
+                          );
+                        })() : item.type === 'event' ? (() => {
+                          const cfg = EVENT_STATUS_CONFIG[(item.data as Event).status] || EVENT_STATUS_CONFIG.new;
+                          return (
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: cfg.bg, color: cfg.color, display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <span style={{ width: 7, height: 7, borderRadius: '50%', background: cfg.dot, display: 'inline-block' }} />
+                              {cfg.label}
+                            </span>
+                          );
+                        })() : (() => {
+                          const cfg = JOB_STATUS_CONFIG[(item.data as Job).status] || JOB_STATUS_CONFIG.draft;
+                          return (
+                            <span style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: cfg.bg, color: cfg.color, display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <span style={{ width: 7, height: 7, borderRadius: '50%', background: cfg.dot, display: 'inline-block' }} />
+                              {cfg.label}
+                            </span>
+                          );
+                        })()}
                         {isAdmin && (
                           <button
                             className="action-btn danger"
-                            onClick={() => item.type === 'project' ? handleDeleteProject(item.data.id) : handleDeleteReview(item.data.id)}
+                            onClick={() =>
+                              item.type === 'project' ? handleDeleteProject(item.data.id) :
+                              item.type === 'review'  ? handleDeleteReview(item.data.id)  :
+                              item.type === 'event'   ? handleDeleteEvent(item.data.id)   :
+                              handleDeleteJob(item.data.id)
+                            }
                           >
                             <i className="fas fa-trash-alt" /> حذف
                           </button>

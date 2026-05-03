@@ -3,6 +3,7 @@
 // صفحة تغيير كلمة المرور — يفتحها المستخدم من الرابط في البريد
 // ─────────────────────────────────────────────────────────────────────────────
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getPasswordStrength } from '../lib/passwordReset';
 
 interface ResetPasswordPageProps {
@@ -11,6 +12,7 @@ interface ResetPasswordPageProps {
 }
 
 export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps) {
+  const navigate = useNavigate();
   // ══════════════════════════════════════════════════════════════════════════════
   // State
   // ══════════════════════════════════════════════════════════════════════════════
@@ -85,7 +87,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
         return;
       }
 
-      window.history.replaceState(null, '', window.location.pathname + '#/reset-password');
+      window.history.replaceState(null, '', '/reset-password');
       setTokenValid(true);
       setLoading(false);
     } catch (err: any) {
@@ -132,6 +134,7 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
       setSuccess(true);
       setTimeout(() => {
         onSuccess?.();
+        navigate('/', { replace: true });
       }, 2500);
     } catch (err: any) {
       setError(err.message || 'حدث خطأ غير متوقع');
@@ -170,12 +173,14 @@ export function ResetPasswordPage({ onSuccess, onBack }: ResetPasswordPageProps)
           </div>
           <h2 className="rp-title">الرابط غير صالح</h2>
           <p className="rp-subtitle">{tokenError || 'هذا الرابط غير صالح أو منتهي الصلاحية'}</p>
-          {onBack && (
-            <button className="rp-btn-primary" onClick={onBack} style={{ marginTop: '24px' }}>
-              <i className="fas fa-key" />
-              طلب رابط جديد
-            </button>
-          )}
+          <button
+            className="rp-btn-primary"
+            onClick={() => { onBack?.(); navigate('/', { replace: true }); }}
+            style={{ marginTop: '24px' }}
+          >
+            <i className="fas fa-key" />
+            طلب رابط جديد
+          </button>
         </div>
       </div>
     );

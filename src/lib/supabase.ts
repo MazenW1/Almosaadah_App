@@ -152,7 +152,40 @@ export interface Review {
   }
 }
 
-// ─── Projects ─────────────────────────────────────────────────────────────────
+// ─── Contracts ────────────────────────────────────────────────────────────────
+export interface Contract {
+  contract_id: string
+  contract_number: string
+  client_name: string
+  client_phone?: string
+  service_name?: string
+  employee_id: string
+  employee_name?: string
+  contract_status: string
+  status_reason?: string
+  contract_url?: string
+  financial_amount?: number
+  financial_notes?: string
+  fee_tier1_label?: string
+  fee_tier1_value?: string
+  fee_tier2_label?: string
+  fee_tier2_value?: string
+  fee_tier3_label?: string
+  fee_tier3_value?: string
+  contract_type?: string
+  contract_details?: string
+  start_date?: string
+  end_date?: string
+  signed_at?: string
+  created_by?: string
+  created_at: string
+  updated_at?: string
+  // علاقات
+  employee?: { employee_name: string; employee_phone?: string }
+  user?: { association_name: string; user_email?: string }
+}
+
+
 export interface Project {
   id: string
   user_id: string
@@ -549,7 +582,134 @@ export const deleteStorageFile = async (bucket: string, path: string) => {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ═══ Contracts Operations ══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ALLOWED_CONTRACT_STATUSES = [
+  'draft',
+  'pending_signature',
+  'pending_admin_review',
+  'approved',
+  'completed',
+  'cancelled',
+  'expired',
+]
+
+export const fetchContracts = () =>
+  supabase
+    .from('contracts')
+    .select(`
+      contract_id, contract_number, client_name, client_phone,
+      service_name, employee_id, employee_name, contract_status,
+      status_reason, contract_url, financial_amount, financial_notes,
+      fee_tier1_label, fee_tier1_value,
+      fee_tier2_label, fee_tier2_value,
+      fee_tier3_label, fee_tier3_value,
+      contract_type, contract_details,
+      start_date, end_date, signed_at,
+      created_by, created_at, updated_at,
+      employee:employee_id(employee_name, employee_phone),
+      user:created_by(association_name, user_email)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(200)
+
+export const createContract = (contract: {
+  contract_number: string
+  client_name: string
+  client_phone?: string
+  service_name?: string
+  employee_id: string
+  employee_name?: string
+  contract_type?: string
+  contract_details?: string
+  financial_amount?: number | null
+  financial_notes?: string
+  fee_tier1_label?: string
+  fee_tier1_value?: string
+  fee_tier2_label?: string
+  fee_tier2_value?: string
+  fee_tier3_label?: string
+  fee_tier3_value?: string
+  start_date?: string
+  end_date?: string
+  created_by?: string
+}) =>
+  supabase.from('contracts').insert([{
+    ...contract,
+    contract_status: 'draft',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }])
+
+export const updateContract = (id: string, updates: Partial<Contract>) => {
+  const { contract_id, created_at, created_by, ...safeUpdates } = updates as any
+  return supabase
+    .from('contracts')
+    .update({ ...safeUpdates, updated_at: new Date().toISOString() })
+    .eq('contract_id', id)
+}
+
+export const updateContractStatus = (
+  id: string,
+  status: string,
+  reason?: string
+) => {
+  if (!ALLOWED_CONTRACT_STATUSES.includes(status))
+    return Promise.resolve({ data: null, error: new Error('حالة عقد غير صالحة') })
+
+  const payload: Record<string, any> = {
+    contract_status: status,
+    updated_at: new Date().toISOString(),
+  }
+  if (status === 'completed') payload.signed_at = new Date().toISOString()
+  if (reason) payload.status_reason = reason
+
+  return supabase.from('contracts').update(payload).eq('contract_id', id)
+}
+
+export const deleteContract = (id: string) =>
+  supabase.from('contracts').delete().eq('contract_id', id)
+
+export const uploadContractFile = async (file: File, contractId: string) => {
+  const ALLOWED = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/jpeg',
+    'image/png',
+  ]
+  if (!ALLOWED.includes(file.type)) throw new Error('نوع الملف غير مسموح (PDF أو Word أو صورة)')
+  if (file.size > 10 * 1024 * 1024) throw new Error('حجم الملف يجب أن يكون أقل من 10MB')
+
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  const path = `contracts/${contractId}_${Date.now()}.${ext}`
+
+  const { error: upErr } = await supabase.storage
+    .from('contracts')
+    .upload(path, file, { upsert: true, contentType: file.type })
+  if (upErr) throw upErr
+
+  const { data: urlData } = supabase.storage.from('contracts').getPublicUrl(path)
+
+  const { error: updateErr } = await supabase
+    .from('contracts')
+    .update({ contract_url: urlData.publicUrl, updated_at: new Date().toISOString() })
+    .eq('contract_id', contractId)
+  if (updateErr) throw updateErr
+
+  return urlData.publicUrl
+}
+
+export const subscribeToContracts = (callback: (payload: any) => void) =>
+  supabase
+    .channel('contracts-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, callback)
+    .subscribe()
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Real-time Subscriptions ═══════════════════════════════════════════════════
+
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const subscribeToReviews = (callback: (payload: any) => void) => {
@@ -640,4 +800,3 @@ export const subscribeToJobs = (callback: (payload: any) => void) =>
     .channel('jobs-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, callback)
     .subscribe()
-    
