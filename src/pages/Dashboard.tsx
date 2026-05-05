@@ -184,6 +184,87 @@ function DateSegment({ value, onChange }: { value: DateFilter; onChange: (v: Dat
   );
 }
 
+// ─── Inline Status Dropdown (للأدمن في جدول الطلبات المسندة) ──────────────────
+const INLINE_STATUS_CFG = [
+  { v: 'pending_review', label: 'قيد المراجعة', icon: 'fa-hourglass-half', pill: { light: 'bg-amber-50 text-amber-700 border-amber-300',   dark: 'bg-amber-900/30 text-amber-400 border-amber-700'   }, dot: 'bg-amber-400',   bg: 'bg-amber-500'   },
+  { v: 'in_progress',    label: 'قيد التنفيذ',  icon: 'fa-cogs',           pill: { light: 'bg-sky-50 text-sky-700 border-sky-300',         dark: 'bg-sky-900/30 text-sky-400 border-sky-700'         }, dot: 'bg-sky-400',     bg: 'bg-sky-500'     },
+  { v: 'completed',      label: 'مكتمل',        icon: 'fa-flag-checkered', pill: { light: 'bg-emerald-50 text-emerald-700 border-emerald-300', dark: 'bg-emerald-900/30 text-emerald-400 border-emerald-700' }, dot: 'bg-emerald-500', bg: 'bg-emerald-500' },
+  { v: 'cancelled',      label: 'ملغى',         icon: 'fa-ban',            pill: { light: 'bg-red-50 text-red-600 border-red-300',         dark: 'bg-red-900/30 text-red-400 border-red-700'         }, dot: 'bg-red-400',     bg: 'bg-red-500'     },
+];
+
+function InlineStatusDropdown({ requestId, currentStatus, isDark, onRefresh, showToast }:
+  { requestId: string; currentStatus: string; isDark: boolean; onRefresh: () => void; showToast: (m: string, t?: any) => void }) {
+  const [open, setOpen]     = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const cfg = INLINE_STATUS_CFG.find(s => s.v === currentStatus) ?? INLINE_STATUS_CFG[0];
+  const pillClass = isDark ? cfg.pill.dark : cfg.pill.light;
+
+  const handleOpen = () => { setOpen(v => !v); };
+
+  const change = async (val: string) => {
+    if (val === currentStatus) { setOpen(false); return; }
+    setSaving(true); setOpen(false);
+    try {
+      const { error } = await supabase.from('service_requests')
+        .update({ request_status: val, updated_at: new Date().toISOString() })
+        .eq('request_id', requestId);
+      if (error) throw error;
+      showToast('تم تحديث الحالة ✓');
+      onRefresh();
+    } catch (err: any) { showToast('خطأ: ' + (err.message || ''), 'error'); }
+    finally { setSaving(false); }
+  };
+
+  if (saving) return (
+    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-400">
+      <i className="fas fa-spinner fa-spin" /> يحفظ...
+    </span>
+  );
+
+  return (
+    <div className="relative">
+      <button onClick={handleOpen}
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold border shadow-sm cursor-pointer hover:opacity-80 transition-all ${pillClass}`}>
+        <span className="relative flex-shrink-0 w-1.5 h-1.5">
+          <span className={`absolute inset-0 rounded-full ${cfg.dot} animate-ping opacity-50`} />
+          <span className={`relative block w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+        </span>
+        <i className={`fas ${cfg.icon} text-[10px]`} />
+        {cfg.label}
+        <i className="fas fa-chevron-down text-[8px] opacity-50 mr-0.5" />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className={`absolute z-50 rounded-2xl border shadow-2xl overflow-hidden min-w-[190px] p-1.5 mt-1
+            ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+            style={{ top: '100%', right: 0 }}>
+            <div className={`px-3 py-2 text-[10px] font-bold uppercase tracking-widest mb-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+              تغيير الحالة
+            </div>
+            {INLINE_STATUS_CFG.map(opt => {
+              const isActive = currentStatus === opt.v;
+              return (
+                <button key={opt.v} onClick={() => change(opt.v)}
+                  className={`w-full text-right px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2.5 mb-0.5
+                    ${isActive ? `${opt.bg} text-white shadow-sm` : (isDark ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50')}`}>
+                  <span className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${isActive ? 'bg-white/20' : opt.bg + ' text-white'}`}>
+                    <i className={`fas ${opt.icon} text-[10px]`} />
+                  </span>
+                  {opt.label}
+                  {isActive && <i className="fas fa-check mr-auto text-[10px]" />}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Contract Upload Cell ─────────────────────────────────────────────────────
 function ContractCell({ requestId, contractUrl, onView, onUploaded, showToast }:
   { requestId: string; contractUrl?: string; onView: (url: string) => void; onUploaded: () => void; showToast: (msg: string, type?: 'success'|'error'|'info') => void }) {
@@ -658,7 +739,7 @@ export default function Dashboard() {
   const openAssignModal = async (id: string) => {
     setCurrentReqId(id);
     try {
-      const { data, error } = await supabase.from('employees').select('employee_id, employee_name, employee_email').eq('is_active', true).eq('employee_role', 'employee');
+      const { data, error } = await supabase.from('employees').select('employee_id, employee_name, employee_email').eq('is_active', true);
       if (error || !data?.length) { showToast('لا يوجد موظفون مفعلون', 'error'); return; }
       setActiveEmployees(data); setSelectedEmployee('');
       setModals(m => ({ ...m, assign: true }));
@@ -676,7 +757,7 @@ export default function Dashboard() {
         .maybeSingle();
 
       const { error } = await supabase.from('service_requests')
-        .update({ assigned_to: selectedEmployee, employee_id: selectedEmployee, request_status: 'approved', updated_at: new Date().toISOString() }).eq('request_id', currentReqId);
+        .update({ assigned_to: selectedEmployee, employee_id: selectedEmployee, updated_at: new Date().toISOString() }).eq('request_id', currentReqId);
       if (error) throw error;
       setModals(m => ({ ...m, assign: false }));
       showToast(`تم الإسناد لـ ${emp?.employee_name || ''} ✓`);
@@ -719,7 +800,8 @@ export default function Dashboard() {
 
       setModals(m => ({ ...m, updateStatus: false }));
       showToast('تم تحديث الحالة ✓');
-      if (currentUser) loadEmpRequests(currentUser.id);
+      if (role === 'admin') { loadAdminRequests(); loadAdminStats(); }
+      else if (currentUser) loadEmpRequests(currentUser.id);
 
       if (reqData?.user_id) {
         await notifyStatusChange({
@@ -1064,7 +1146,7 @@ export default function Dashboard() {
                 {assignedRequests.length} طلب مسند
               </span>
               <span className={`text-xs ${dm ? 'text-slate-400' : 'text-slate-400'} ms-auto`}>
-                الطلبات التي تم إسنادها لموظفين
+                الطلبات التي تم إسنادها للموظفين
               </span>
             </div>
 
@@ -1137,7 +1219,7 @@ export default function Dashboard() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className={dm ? 'bg-slate-700/80' : 'bg-gradient-to-l from-violet-700 to-violet-500'}>
-                    {['#', 'اسم الخدمة', 'اسم العميل', 'اسم الموظف', 'الحالة', 'العقد', 'التاريخ'].map((h, i) => (
+                    {['#', 'اسم الخدمة', 'اسم العميل','رقم العميل', 'اسم الموظف', 'الحالة', 'العقد', 'التاريخ'].map((h, i) => (
                       <th key={h} className={`px-4 py-3 text-right text-[11px] font-bold text-white/90 whitespace-nowrap tracking-wide
                         ${i === 0 ? 'rounded-tr-2xl w-10' : ''} ${i === 6 ? 'rounded-tl-2xl' : ''}`}>
                         {h}
@@ -1147,17 +1229,17 @@ export default function Dashboard() {
                 </thead>
                 <tbody>
                   {loadingStates.admin ? (
-                    <tr><td colSpan={7} className="text-center py-16">
+                    <tr><td colSpan={8} className="text-center py-16">
                       <i className="fas fa-spinner fa-spin text-3xl text-violet-400 block mb-2" />
                       <span className={`text-sm ${dm ? 'text-slate-400' : 'text-slate-400'}`}>جاري التحميل...</span>
                     </td></tr>
                   ) : assignedRequests.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center py-16">
+                    <tr><td colSpan={8} className="text-center py-16">
                       <i className="fas fa-inbox text-5xl block mb-3 opacity-20 text-slate-300" />
                       <p className={`text-sm font-semibold ${dm ? 'text-slate-400' : 'text-slate-400'}`}>لا توجد طلبات مسندة بعد</p>
                     </td></tr>
                   ) : filteredAssignedReqs.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center py-16">
+                    <tr><td colSpan={8} className="text-center py-16">
                       <i className="fas fa-search text-5xl block mb-3 opacity-20 text-slate-300" />
                       <p className={`text-sm font-semibold ${dm ? 'text-slate-400' : 'text-slate-400'}`}>لا توجد نتائج تطابق الفلتر</p>
                       <button onClick={() => { setAssignedStatusFilter('all'); setAssignedDateFilter('all'); }}
@@ -1188,6 +1270,9 @@ export default function Dashboard() {
                         <td className={`px-4 py-3 text-sm font-bold ${dm ? 'text-slate-200' : 'text-slate-700'}`}>
                           {r.user?.association_name || '—'}
                         </td>
+                        <td className={`px-4 py-3 text-sm font-bold ${dm ? 'text-slate-200' : 'text-slate-700'}`}>
+                          {r.user?.user_phone || '—'}
+                        </td>
                         <td className="px-4 py-3">
                           {emp?.employee_name ? (
                             <span className={`flex items-center gap-1.5 text-sm font-semibold ${dm ? 'text-violet-400' : 'text-violet-700'}`}>
@@ -1196,26 +1281,22 @@ export default function Dashboard() {
                           ) : <span className={`text-xs ${dm ? 'text-slate-500' : 'text-slate-400'}`}>—</span>}
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold border ${sc.pill}`}>
-                            <span className="relative flex-shrink-0 w-2 h-2">
-                              <span className={`absolute inset-0 rounded-full ${sc.dot} animate-ping opacity-60`} />
-                              <span className={`relative block w-2 h-2 rounded-full ${sc.dot}`} />
-                            </span>
-                            <i className={`fas ${sc.icon} text-[10px]`} />
-                            {sc.label}
-                          </span>
+                          <InlineStatusDropdown
+                            requestId={r.request_id}
+                            currentStatus={r.request_status}
+                            isDark={dm}
+                            onRefresh={() => { loadAdminRequests(); loadAdminStats(); }}
+                            showToast={showToast}
+                          />
                         </td>
                         <td className="px-4 py-3">
-                          {r.contract_url ? (
-                            <button
-                              onClick={() => { setPdfUrl(r.contract_url!); setModals(m => ({ ...m, pdf: true })); }}
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all
-                                ${dm ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700 hover:bg-emerald-700 hover:text-white' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-600 hover:text-white'}`}>
-                              <i className="fas fa-eye" /> عرض العقد
-                            </button>
-                          ) : (
-                            <span className={`text-xs ${dm ? 'text-slate-500' : 'text-slate-400'}`}>لم يُرفع بعد</span>
-                          )}
+                          <ContractCell
+                            requestId={r.request_id}
+                            contractUrl={r.contract_url}
+                            onView={(url) => { setPdfUrl(url); setModals(m => ({ ...m, pdf: true })); }}
+                            onUploaded={() => { loadAdminRequests(); loadAdminStats(); }}
+                            showToast={showToast}
+                          />
                         </td>
                         <td className={`px-4 py-3 text-xs whitespace-nowrap ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
                           {new Date(r.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' })}
@@ -1379,42 +1460,6 @@ export default function Dashboard() {
       )}
 
       {/* Update Status Modal */}
-      {modals.updateStatus && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"
-          onClick={e => e.target === e.currentTarget && setModals(m => ({ ...m, updateStatus: false }))}>
-          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
-              <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-exchange-alt text-sky-500" />تحديث الحالة</h3>
-              <button onClick={() => setModals(m => ({ ...m, updateStatus: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
-            </div>
-            <div className="px-6 py-5 space-y-4">
-              <div>
-                <label className={`block mb-2 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>الحالة الجديدة</label>
-                <select value={newStatus} onChange={e => setNewStatus(e.target.value)}
-                  className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                    ${dm ? 'bg-slate-700 border-slate-600 text-white focus:border-sky-500 focus:ring-sky-900/30' : 'border-slate-200 focus:border-sky-400 focus:ring-sky-100'}`}>
-                  <option value="in_progress">قيد التنفيذ</option>
-                  <option value="completed">مكتمل</option>
-                  <option value="cancelled">ملغي</option>
-                </select>
-              </div>
-              <div>
-                <label className={`block mb-2 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات (اختياري)</label>
-                <textarea className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
-                  ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-sky-500 focus:ring-sky-900/30' : 'border-slate-200 focus:border-sky-400 focus:ring-sky-100'}`}
-                  rows={3} placeholder="اكتب ملاحظاتك..." value={empNote} onChange={e => setEmpNote(e.target.value)} />
-              </div>
-            </div>
-            <div className={`px-6 py-4 border-t flex gap-3 justify-end ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setModals(m => ({ ...m, updateStatus: false }))} className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-colors ${dm ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 hover:bg-slate-200'}`}>إلغاء</button>
-              <button onClick={handleUpdateStatus} className="px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-bold text-sm flex items-center gap-2 transition-colors">
-                <i className="fas fa-check" /> تحديث
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* PDF Viewer Modal */}
       {modals.pdf && pdfUrl && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[1000] flex items-center justify-center p-4 sm:p-5"

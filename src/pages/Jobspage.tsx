@@ -120,7 +120,7 @@ type ApplyMethod = 'whatsapp' | 'twitter' | 'link' | 'email';
 
 const APPLY_METHOD_INFO: Record<ApplyMethod, { label: string; icon: string; placeholder: string }> = {
   whatsapp: { label: 'واتساب',  icon: '📱', placeholder: '05xxxxxxxx' },
-  twitter:  { label: 'تويتر',   icon: '🐦', placeholder: 'https://twitter.com/...' },
+  twitter:  { label: 'X (تويتر)', icon: '𝕏', placeholder: 'https://x.com/...' },
   link:     { label: 'رابط',    icon: '🔗', placeholder: 'https://...' },
   email:    { label: 'إيميل',   icon: '📧', placeholder: 'hr@org.com' },
 };
@@ -718,6 +718,7 @@ export default function JobsPage() {
   const [showForm, setShowForm]             = useState(false);
   const [showAdminQueue, setShowAdminQueue] = useState(false);
   const [showProofModal, setShowProofModal] = useState<Job | null>(null);
+  const [selectedJob, setSelectedJob]       = useState<Job | null>(null);
   const [isSubmitting, setIsSubmitting]     = useState(false);
   const [filterWork, setFilterWork]         = useState<string>('all');
   const [activeTab, setActiveTab]           = useState<'browse' | 'my'>('browse');
@@ -731,7 +732,7 @@ export default function JobsPage() {
 
   // منع اهتزاز الخلفية عند فتح أي مودال
   useEffect(() => {
-    const isOpen = !!(showForm || showAdminQueue || showProofModal);
+    const isOpen = !!(showForm || showAdminQueue || showProofModal || selectedJob);
     if (isOpen) {
       document.documentElement.style.setProperty('--scrollbar-w', `${window.innerWidth - document.documentElement.clientWidth}px`);
       document.body.classList.add('modal-open');
@@ -739,7 +740,7 @@ export default function JobsPage() {
       document.body.classList.remove('modal-open');
     }
     return () => { document.body.classList.remove('modal-open'); };
-  }, [showForm, showAdminQueue, showProofModal]);
+  }, [showForm, showAdminQueue, showProofModal, selectedJob]);
 
   const fetchJobsFromDB = useCallback(async () => {
     const { data, error } = await supabase
@@ -1190,24 +1191,9 @@ export default function JobsPage() {
                           )}
                           <button
                             className="jb-apply-btn"
-                            onClick={() => {
-                              const m = job.apply_method;
-                              if (m === 'whatsapp' && job.apply_phone) {
-                                safeOpenUrl(`https://wa.me/966${job.apply_phone.replace(/^0/, '')}`);
-                              } else if (m === 'twitter' && job.apply_url) {
-                                safeOpenUrl(job.apply_url);
-                              } else if (m === 'link' && job.apply_url) {
-                                safeOpenUrl(job.apply_url);
-                              } else if (m === 'email' && job.apply_url) {
-                                safeOpenUrl(`mailto:${job.apply_url}?subject=طلب تقديم — ${job.job_title}`);
-                              } else if (job.contact_email) {
-                                safeOpenUrl(`mailto:${job.contact_email}?subject=طلب تقديم — ${job.job_title}`);
-                              } else if (job.contact_phone) {
-                                safeOpenUrl(`https://wa.me/966${job.contact_phone.replace(/^0/, '')}`);
-                              }
-                            }}
+                            onClick={() => setSelectedJob(job)}
                           >
-                            {job.apply_method === 'whatsapp' ? '📱' : job.apply_method === 'twitter' ? '🐦' : job.apply_method === 'link' ? '🔗' : job.apply_method === 'email' ? '📧' : '←'} تقديم الآن
+                            📋 تقديم الآن
                           </button>
                         </div>
                       </div>
@@ -1310,6 +1296,183 @@ export default function JobsPage() {
           <i className="fas fa-shield-alt" />
         </button>
       )}
+
+      {/* ── Job Detail Modal ── */}
+      {selectedJob && (() => {
+        const job = selectedJob;
+        const wt = WORK_TYPE[job.work_type];
+        const st = STATUS_INFO[job.status];
+        const daysLeft = job.deadline
+          ? Math.ceil((new Date(job.deadline).getTime() - Date.now()) / 86400000)
+          : null;
+
+        const handleApplyNow = () => {
+          const m = job.apply_method;
+          if (m === 'whatsapp' && job.apply_phone) {
+            safeOpenUrl(`https://wa.me/966${job.apply_phone.replace(/^0/, '')}`);
+          } else if (m === 'twitter' && job.apply_url) {
+            safeOpenUrl(job.apply_url);
+          } else if (m === 'link' && job.apply_url) {
+            safeOpenUrl(job.apply_url);
+          } else if (m === 'email' && job.apply_url) {
+            safeOpenUrl(`mailto:${job.apply_url}?subject=طلب تقديم — ${job.job_title}`);
+          } else if (job.contact_email) {
+            safeOpenUrl(`mailto:${job.contact_email}?subject=طلب تقديم — ${job.job_title}`);
+          } else if (job.contact_phone) {
+            safeOpenUrl(`https://wa.me/966${job.contact_phone.replace(/^0/, '')}`);
+          }
+        };
+
+        const applyIcon = job.apply_method === 'whatsapp' ? '📱' : job.apply_method === 'twitter' ? '𝕏' : job.apply_method === 'link' ? '🔗' : job.apply_method === 'email' ? '📧' : '←';
+        const applyLabel = job.apply_method === 'whatsapp' ? 'تقديم عبر واتساب' : job.apply_method === 'twitter' ? 'تقديم عبر X (تويتر)' : job.apply_method === 'link' ? 'تقديم عبر الرابط' : job.apply_method === 'email' ? 'تقديم عبر الإيميل' : 'تقديم الآن';
+
+        return (
+          <div className="jb-overlay" style={{ zIndex: 250 }}>
+            <div className="jb-backdrop" onClick={() => setSelectedJob(null)} />
+            <div className="jb-modal" style={{ maxWidth: 700 }}>
+              <div className="jb-modal-header">
+                <p className="jb-modal-title">💼 {job.job_title}</p>
+                <p className="jb-modal-subtitle">🏢 {job.user?.association_name || job.association_name}</p>
+                <button className="jb-modal-close" onClick={() => setSelectedJob(null)}>✕</button>
+              </div>
+
+              <div className="jb-modal-body">
+                {/* Badges row */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 20,
+                    background: dm ? wt.darkBg : wt.bg, color: wt.color, border: `1px solid ${wt.color}30`,
+                  }}>
+                    {wt.icon} {wt.label}
+                  </span>
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 20,
+                    background: dm ? st.darkBg : st.bg, color: st.color, border: `1px solid ${st.color}30`,
+                  }}>
+                    {st.label}
+                  </span>
+                  {job.is_verified && (
+                    <span style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 20, background: 'rgba(22,163,74,.1)', color: '#16a34a', border: '1px solid rgba(22,163,74,.25)' }}>
+                      ✓ موثّقة
+                    </span>
+                  )}
+                  {daysLeft !== null && daysLeft >= 0 && (
+                    <span style={{
+                      fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 20,
+                      background: daysLeft <= 3 ? 'rgba(239,68,68,.1)' : 'rgba(245,158,11,.1)',
+                      color: daysLeft <= 3 ? '#ef4444' : '#f59e0b',
+                      border: `1px solid ${daysLeft <= 3 ? 'rgba(239,68,68,.3)' : 'rgba(245,158,11,.3)'}`,
+                    }}>
+                      ⏳ {daysLeft === 0 ? 'آخر يوم للتقديم' : `${daysLeft} يوم متبقي`}
+                    </span>
+                  )}
+                </div>
+
+                {/* Info grid */}
+                <div className="jb-section-label">تفاصيل الوظيفة</div>
+                <div className="jb-grid-2" style={{ marginBottom: 18 }}>
+                  <div className="jb-info-item">
+                    <div className="jb-info-lbl">📍 المدينة</div>
+                    <div className="jb-info-val">{job.city}</div>
+                  </div>
+                  {job.salary_range && (
+                    <div className="jb-info-item">
+                      <div className="jb-info-lbl">💰 الراتب</div>
+                      <div className="jb-info-val">{job.salary_range}</div>
+                    </div>
+                  )}
+                  <div className="jb-info-item">
+                    <div className="jb-info-lbl">👥 عدد الشواغر</div>
+                    <div className="jb-info-val">{job.vacancies}</div>
+                  </div>
+                  {job.min_experience != null && job.min_experience > 0 && (
+                    <div className="jb-info-item">
+                      <div className="jb-info-lbl">⏱ الخبرة المطلوبة</div>
+                      <div className="jb-info-val">{job.min_experience} سنة</div>
+                    </div>
+                  )}
+                  {job.education_level && (
+                    <div className="jb-info-item">
+                      <div className="jb-info-lbl">🎓 المؤهل</div>
+                      <div className="jb-info-val">{job.education_level}</div>
+                    </div>
+                  )}
+                  {job.deadline && (
+                    <div className="jb-info-item">
+                      <div className="jb-info-lbl">📅 آخر موعد للتقديم</div>
+                      <div className="jb-info-val">
+                        {new Date(job.deadline).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' })}
+                      </div>
+                    </div>
+                  )}
+                  {job.gender !== 'both' && (
+                    <div className="jb-info-item">
+                      <div className="jb-info-lbl">👤 الجنس</div>
+                      <div className="jb-info-val">{job.gender === 'male' ? '👨 ذكور' : '👩 إناث'}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Description */}
+                {job.job_description && (
+                  <>
+                    <div className="jb-section-label">وصف الوظيفة</div>
+                    <p style={{ fontSize: 14, lineHeight: 1.8, color: dm ? '#cbd5e1' : '#334155', marginBottom: 18, whiteSpace: 'pre-wrap' }}>
+                      {job.job_description}
+                    </p>
+                  </>
+                )}
+
+                {/* Requirements */}
+                {job.requirements && (
+                  <>
+                    <div className="jb-section-label">المتطلبات</div>
+                    <p style={{ fontSize: 14, lineHeight: 1.8, color: dm ? '#cbd5e1' : '#334155', marginBottom: 18, whiteSpace: 'pre-wrap' }}>
+                      {job.requirements}
+                    </p>
+                  </>
+                )}
+
+                {/* Benefits */}
+                {job.benefits && (
+                  <>
+                    <div className="jb-section-label">المزايا</div>
+                    <p style={{ fontSize: 14, lineHeight: 1.8, color: dm ? '#cbd5e1' : '#334155', marginBottom: 18, whiteSpace: 'pre-wrap' }}>
+                      {job.benefits}
+                    </p>
+                  </>
+                )}
+
+                {/* Apply Method info box */}
+                <div style={{
+                  borderRadius: 14, padding: '14px 16px', marginBottom: 20,
+                  background: dm ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.05)',
+                  border: '1.5px solid rgba(124,58,237,0.2)',
+                }}>
+                  <p style={{ fontSize: 13, fontWeight: 800, color: '#7c3aed', margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {applyIcon} طريقة التقديم
+                  </p>
+                  <p style={{ fontSize: 13, color: dm ? '#94a3b8' : '#64748b', margin: 0, lineHeight: 1.6 }}>
+                    {job.apply_method === 'whatsapp' && 'سيتم التواصل معك عبر واتساب'}
+                    {job.apply_method === 'email' && 'سيتم إرسال طلبك عبر البريد الإلكتروني'}
+                    {job.apply_method === 'link' && 'سيتم تحويلك لرابط التقديم الرسمي'}
+                    {job.apply_method === 'twitter' && 'سيتم تحويلك لحساب X (تويتر) الخاص بالجمعية'}
+                    {!job.apply_method && 'تواصل مع الجمعية مباشرة للتقديم'}
+                  </p>
+                </div>
+
+                {/* Apply button */}
+                <button
+                  className="jb-submit"
+                  onClick={handleApplyNow}
+                >
+                  {applyIcon} {applyLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Admin Queue */}
       {showAdminQueue && (
@@ -1556,7 +1719,7 @@ export default function JobsPage() {
                     <option value="whatsapp">📱 واتساب</option>
                     <option value="email">📧 إيميل</option>
                     <option value="link">🔗 رابط تقديم</option>
-                    <option value="twitter">🐦 تويتر</option>
+                    <option value="twitter">𝕏 X (تويتر)</option>
                   </select>
                 </div>
 
@@ -1576,7 +1739,7 @@ export default function JobsPage() {
 
                 {(form.apply_method === 'link' || form.apply_method === 'twitter') && (
                   <div className="jb-field">
-                    <label className="jb-label">{form.apply_method === 'twitter' ? 'رابط التغريدة أو الحساب *' : 'رابط التقديم *'}</label>
+                    <label className="jb-label">{form.apply_method === 'twitter' ? 'رابط حساب X أو التغريدة *' : 'رابط التقديم *'}</label>
                     <input
                       type="url"
                       className="jb-input"

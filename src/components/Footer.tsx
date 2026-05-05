@@ -79,8 +79,8 @@ export function Footer() {
           font-weight: 900;
         }
 
-        /* Owner card */
-        .footer-owner-card {
+        /* Card base */
+        .footer-card {
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -88,17 +88,20 @@ export function Footer() {
           padding: 20px 36px;
           background: linear-gradient(135deg, rgba(14,165,233,0.06) 0%, rgba(56,189,248,0.03) 100%);
           border: 1.5px solid rgba(14, 165, 233, 0.18);
-          border-radius: 999px;
+          border-radius: 20px;
           box-shadow: 0 4px 24px rgba(14,165,233,0.08), inset 0 1px 0 rgba(255,255,255,0.7);
           backdrop-filter: blur(12px);
           transition: box-shadow 0.3s ease, transform 0.3s ease;
+          min-width: 300px;
+          width: 100%;
+          box-sizing: border-box;
         }
-        .footer-owner-card:hover {
+        .footer-card:hover {
           box-shadow: 0 8px 32px rgba(14,165,233,0.18), inset 0 1px 0 rgba(255,255,255,0.8);
           transform: translateY(-2px);
         }
 
-        .footer-owner-label {
+        .footer-card-label {
           font-family: 'Tajawal', sans-serif;
           font-size: 0.7rem;
           font-weight: 600;
@@ -107,7 +110,7 @@ export function Footer() {
           text-transform: uppercase;
         }
 
-        .footer-owner-name {
+        .footer-card-title {
           font-family: 'Tajawal', sans-serif;
           font-size: 1.05rem;
           font-weight: 900;
@@ -117,6 +120,20 @@ export function Footer() {
           background-clip: text;
           text-align: center;
           line-height: 1.5;
+        }
+
+
+        /* Cards container - Vertical layout */
+        .footer-cards-column {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          width: 100%;
+          max-width: 400px;
+        }
+
+        .footer-cards-column .footer-card {
+          width: 100%;
         }
 
         /* Social links */
@@ -160,6 +177,16 @@ export function Footer() {
         .social-link.facebook-link:hover   { background: #1877f2; color: #fff; border-color: #1877f2; }
         .social-link.phone-link:hover      { background: #16a34a; color: #fff; border-color: #16a34a; }
         .social-link.location-link:hover   { background: #dc2626; color: #fff; border-color: #dc2626; }
+
+        /* Contact links */
+        .footer-contact-links {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
+
 
         /* Divider */
         .footer-divider {
@@ -239,46 +266,61 @@ export function Footer() {
             </p>
           </div>
 
-          {/* Owner card */}
-          <div className="footer-owner-card">
-            <span className="footer-owner-label">المالك</span>
-            <span className="footer-owner-name">راكان مطلق مسيفر العتيبي</span>
-          </div>
+          {/* Cards column */}
+          <div className="footer-cards-column">
 
-          {/* Social links */}
-          <div className="footer-socials">
-            <a href="https://x.com/SWalttwyr" className="social-link x-link"
-              aria-label="X (تويتر)" target="_blank" rel="noopener noreferrer">
-              <i className="fab fa-x-twitter" />
-            </a>
-            <a href="https://www.linkedin.com/company/adminaide/" className="social-link linkedin-link"
-              aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
-              <i className="fab fa-linkedin-in" />
-            </a>
-            <a href="https://www.instagram.com/almosaadah.sa?igsh=ZXNia3J6YjdvdDIz" className="social-link instagram-link"
-              aria-label="Instagram" target="_blank" rel="noopener noreferrer">
-              <i className="fab fa-instagram" />
-            </a>
-            <a href="https://www.facebook.com/profile.php?id=61588813229375" className="social-link facebook-link"
-              aria-label="Facebook" target="_blank" rel="noopener noreferrer">
-              <i className="fab fa-facebook-f" />
-            </a>
-            <a href="https://wa.me/966580171160" className="social-link whatsapp-link"
-              aria-label="WhatsApp" target="_blank" rel="noopener noreferrer">
-              <i className="fab fa-whatsapp" />
-            </a>
-            <a href="tel:+966580171160" className="social-link phone-link"
-              aria-label="الاتصال">
-              <i className="fas fa-phone" />
-            </a>
-            <a href="mailto:info@almosaadah.com" className="social-link email-link"
-              aria-label="البريد الإلكتروني">
-              <i className="fas fa-envelope" />
-            </a>
-            <a href="https://maps.app.goo.gl/mrz9Z5Ddf7HyHotF9?g_st=aw" className="social-link location-link"
-              aria-label="الموقع على الخريطة" target="_blank" rel="noopener noreferrer">
-              <i className="fas fa-map-marker-alt" />
-            </a>
+            {/* Owner card */}
+            <div className="footer-card">
+              <span className="footer-card-label">المالك</span>
+              <span className="footer-card-title">راكان مطلق مسيفر العتيبي</span>
+            </div>
+
+            {/* Social media card */}
+            <div className="footer-card">
+              <span className="footer-card-label">وسائل التواصل الاجتماعي</span>
+              <div className="footer-socials">
+                <a href="https://x.com/SWalttwyr" className="social-link x-link"
+                  aria-label="X (تويتر)" target="_blank" rel="noopener noreferrer">
+                  <i className="fab fa-x-twitter" />
+                </a>
+                <a href="https://www.linkedin.com/company/adminaide/" className="social-link linkedin-link"
+                  aria-label="LinkedIn" target="_blank" rel="noopener noreferrer">
+                  <i className="fab fa-linkedin-in" />
+                </a>
+                <a href="https://www.instagram.com/almosaadah.sa?igsh=ZXNia3J6YjdvdDIz" className="social-link instagram-link"
+                  aria-label="Instagram" target="_blank" rel="noopener noreferrer">
+                  <i className="fab fa-instagram" />
+                </a>
+                <a href="https://www.facebook.com/profile.php?id=61588813229375" className="social-link facebook-link"
+                  aria-label="Facebook" target="_blank" rel="noopener noreferrer">
+                  <i className="fab fa-facebook-f" />
+                </a>
+              </div>
+            </div>
+
+            {/* Contact card */}
+            <div className="footer-card">
+              <span className="footer-card-label">تواصل معنا</span>
+              <div className="footer-contact-links">
+                <a href="https://wa.me/966580171160" className="social-link whatsapp-link"
+                  aria-label="WhatsApp" target="_blank" rel="noopener noreferrer">
+                  <i className="fab fa-whatsapp" />
+                </a>
+                <a href="tel:+966580171160" className="social-link phone-link"
+                  aria-label="الاتصال">
+                  <i className="fas fa-phone" />
+                </a>
+                <a href="https://maps.app.goo.gl/mrz9Z5Ddf7HyHotF9?g_st=aw" className="social-link location-link"
+                  aria-label="الموقع على الخريطة" target="_blank" rel="noopener noreferrer">
+                  <i className="fas fa-map-marker-alt" />
+                </a>
+                <a href="mailto:info@almosaadah.com" className="social-link email-link"
+                  aria-label="البريد الإلكتروني">
+                  <i className="fas fa-envelope" />
+                </a>
+              </div>
+            </div>
+
           </div>
 
           <div className="footer-divider" />

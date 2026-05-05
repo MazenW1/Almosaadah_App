@@ -49,6 +49,18 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 })
 
+// ── مسح الـ session الفاسدة تلقائياً عند فشل الـ Refresh Token ──
+supabase.auth.onAuthStateChange((event) => {
+  if ((event as string) === 'TOKEN_REFRESH_FAILED') {
+    try {
+      supabase.auth.signOut({ scope: 'local' }).catch(() => {})
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('sb-') || k.startsWith('supabase.auth'))
+        .forEach(k => localStorage.removeItem(k))
+    } catch {}
+  }
+})
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Types Definitions (جميع الجداول) ══════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -77,9 +89,23 @@ export interface News {
   device_info?: string
   timestamp?: number
   created_by?: string
+  author?: string
+  created_at: string
+  city_info?: string
 }
 
 // ─── Services ─────────────────────────────────────────────────────────────────
+
+// قسم مرن: عنوان + قيمة + أيقونة + لون + بنود داخلية اختيارية
+export interface ServiceSection {
+  label: string     // مثال: "الهدف" | "ضمان المساعدة"
+  value: string     // النص داخل القسم
+  icon?: string     // fa-bullseye | fa-shield-alt ...
+  color?: string    // لون الحدود والنص مثل #0891b2
+  items?: string[]  // قائمة بنود داخل القسم (اختياري)
+}
+
+// النوع الأساسي — للتوافق مع الكود القديم
 export interface Service {
   service_id: string
   service_name: string
@@ -88,6 +114,18 @@ export interface Service {
   icon?: string
   is_active: boolean
   created_at?: string
+}
+
+// النوع الكامل مع الأعمدة الجديدة
+export interface ServiceFull extends Service {
+  badge?: string
+  badge_icon?: string
+  price?: string
+  price_color?: string
+  emoji?: string
+  highlight?: boolean
+  sort_order?: number
+  sections?: ServiceSection[]
 }
 
 // ─── Service Requests ─────────────────────────────────────────────────────────
@@ -305,6 +343,7 @@ export const fetchServices = () =>
     .from('services')
     .select('*')
     .eq('is_active', true)
+    .order('sort_order', { ascending: true })
 
 export const fetchServiceById = (id: string) =>
   supabase
@@ -321,6 +360,58 @@ export const fetchServiceByName = (name: string) =>
     .eq('service_name', name)
     .eq('is_active', true)
     .maybeSingle()
+
+// جلب مع كل الأعمدة الجديدة للصفحة الرئيسية
+export const fetchServicesWithSections = async (): Promise<ServiceFull[]> => {
+  const { data, error } = await supabase
+    .from('services')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+  if (error) throw error
+  return data ?? []
+}
+
+// إنشاء خدمة أو منتج جديد
+export const createService = async (
+  service: Omit<ServiceFull, 'created_at'>
+): Promise<string> => {
+  const { data, error } = await supabase
+    .from('services')
+    .insert([{ ...service, is_active: true, created_at: new Date().toISOString() }])
+    .select('service_id')
+    .single()
+  if (error) throw error
+  return data.service_id
+}
+
+// تعديل خدمة أو منتج موجود
+export const updateService = async (
+  serviceId: string,
+  updates: Partial<ServiceFull>
+): Promise<void> => {
+  const { created_at, ...safeUpdates } = updates as any
+  const { error } = await supabase
+    .from('services')
+    .update(safeUpdates)
+    .eq('service_id', serviceId)
+  if (error) throw error
+}
+
+// حذف
+export const deleteService = (serviceId: string) =>
+  supabase.from('services').delete().eq('service_id', serviceId)
+
+// تفعيل / تعطيل
+export const toggleServiceActive = (serviceId: string, is_active: boolean) =>
+  supabase.from('services').update({ is_active }).eq('service_id', serviceId)
+
+// Real-time — يُعيد تحميل البيانات عند أي تغيير
+export const subscribeToServices = (callback: (payload: any) => void, channelId = 'services-changes') =>
+  supabase
+    .channel(channelId)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'services' }, callback)
+    .subscribe()
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ Service Requests Operations ═══════════════════════════════════════════════
@@ -800,3 +891,7 @@ export const subscribeToJobs = (callback: (payload: any) => void) =>
     .channel('jobs-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, callback)
     .subscribe()
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// أضف هذا الكود في نهاية ملف supabase.ts
+// ═══════════════════════════════════════════════════════════════════════════════

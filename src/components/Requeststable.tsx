@@ -361,13 +361,19 @@ function AssignDropdown({ requestId, currentAssigned, onRefresh, showToast, isDa
   const [saving,    setSaving]    = useState(false);
   const [selected,  setSelected]  = useState(currentAssigned || '');
   const [open,      setOpen]      = useState(false);
+  const [pos,       setPos]       = useState({ top: 0, right: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.top - 4, right: window.innerWidth - r.right });
+    }
     if (employees.length) { setOpen(true); return; }
     setLoading(true);
     try {
       const { data } = await supabase.from('employees')
-        .select('employee_id, employee_name').eq('is_active', true).eq('employee_role', 'employee');
+        .select('employee_id, employee_name').eq('is_active', true);
       setEmployees(data || []);
       setOpen(true);
     } finally { setLoading(false); }
@@ -378,7 +384,7 @@ function AssignDropdown({ requestId, currentAssigned, onRefresh, showToast, isDa
     setSaving(true);
     try {
       const { error } = await supabase.from('service_requests')
-        .update({ assigned_to: empId, employee_id: empId, request_status: 'in_progress', updated_at: new Date().toISOString() })
+        .update({ assigned_to: empId, employee_id: empId, updated_at: new Date().toISOString() })
         .eq('request_id', requestId);
       if (error) throw error;
       setSelected(empId);
@@ -393,7 +399,7 @@ function AssignDropdown({ requestId, currentAssigned, onRefresh, showToast, isDa
 
   return (
     <div className="relative">
-      <button onClick={load} disabled={loading || saving}
+      <button ref={btnRef} onClick={load} disabled={loading || saving}
         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all min-w-[130px] justify-between
           ${selected
             ? 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'
@@ -410,8 +416,11 @@ function AssignDropdown({ requestId, currentAssigned, onRefresh, showToast, isDa
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className={`absolute top-full mt-1 right-0 z-50 rounded-xl border shadow-lg overflow-hidden min-w-[180px]
-            ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+          <div
+            className={`fixed z-50 rounded-xl border shadow-xl overflow-hidden min-w-[180px]
+              ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+            style={{ top: pos.top, right: pos.right, transform: 'translateY(-100%)' }}
+          >
             {employees.length === 0 ? (
               <div className={`px-4 py-3 text-xs ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>لا يوجد موظفون</div>
             ) : employees.map(emp => (
@@ -437,6 +446,8 @@ function StatusDropdown({ requestId, currentStatus, onRefresh, showToast, isDark
   { requestId: string; currentStatus: string; onRefresh: () => void; showToast: (m: string, t?: any) => void; isDark: boolean }) {
   const [saving, setSaving] = useState(false);
   const [open,   setOpen]   = useState(false);
+  const [pos,    setPos]    = useState({ top: 0, right: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const change = async (val: string) => {
     if (val === currentStatus) { setOpen(false); return; }
@@ -452,6 +463,14 @@ function StatusDropdown({ requestId, currentStatus, onRefresh, showToast, isDark
     finally { setSaving(false); }
   };
 
+  const handleOpen = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.top - 4, right: window.innerWidth - r.right });
+    }
+    setOpen(v => !v);
+  };
+
   const s = STATUS_CFG[currentStatus] ?? STATUS_CFG.pending_review;
 
   if (saving) {
@@ -464,8 +483,7 @@ function StatusDropdown({ requestId, currentStatus, onRefresh, showToast, isDark
 
   return (
     <div className="relative">
-      {/* زر يعرض الحالة الحالية */}
-      <button onClick={() => setOpen(v => !v)}
+      <button ref={btnRef} onClick={handleOpen}
         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold border shadow-sm cursor-pointer
           hover:opacity-80 transition-all ${s.pill}`}>
         <span className="relative flex-shrink-0 w-1.5 h-1.5">
@@ -477,12 +495,14 @@ function StatusDropdown({ requestId, currentStatus, onRefresh, showToast, isDark
         <i className="fas fa-pen text-[8px] opacity-50 mr-0.5" />
       </button>
 
-      {/* Dropdown */}
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className={`absolute top-full mt-1.5 right-0 z-50 rounded-2xl border shadow-2xl overflow-hidden min-w-[200px] p-1.5
-            ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+          <div
+            className={`fixed z-50 rounded-2xl border shadow-2xl overflow-hidden min-w-[200px] p-1.5
+              ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+            style={{ top: pos.top, right: pos.right, transform: 'translateY(-100%)' }}
+          >
             <div className={`px-3 py-2 text-[10px] font-bold uppercase tracking-widest mb-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
               تغيير الحالة
             </div>
@@ -852,7 +872,20 @@ export default function RequestsTable({
                       <td className={`px-4 py-3 text-sm font-semibold ${text}`}>
                         {adminService?.service_name || service?.service_name || (r.services as any)?.service_name || '—'}
                       </td>
-                      <td className="px-4 py-3"><StatusBadge status={r.request_status} /></td>
+                      {/* الحالة مع dropdown للأدمن والموظف */}
+                      <td className="px-4 py-3">
+                        {role === 'admin' ? (
+                          <StatusDropdown
+                            requestId={r.request_id}
+                            currentStatus={r.request_status}
+                            onRefresh={refresh}
+                            showToast={showToast}
+                            isDark={dk}
+                          />
+                        ) : (
+                          <StatusBadge status={r.request_status} />
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <AssignDropdown requestId={r.request_id} currentAssigned={r.assigned_to}
                           onRefresh={refresh} showToast={showToast} isDark={dk} />

@@ -1,321 +1,300 @@
-interface Product {
-  title: string;
-  emoji: string;
-  description: string;
-  goal: string;
-  goalIcon?: string;
-  goalColor?: string;
-  features: string[];
-  featuresLabel?: string;
-  highlight?: boolean;
-  type?: string;
-  badge?: string;
-  badgeIcon?: string;
-  price?: string;
-  priceColor?: string;
-  extraNote?: string;
-  extraNoteIcon?: string;
-  extraNoteColor?: string;
-  extraNoteBorderColor?: string;
-}
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../hooks/useAuth';
+import { fetchServicesWithSections, subscribeToServices, deleteService } from '../lib/supabase';
+import type { ServiceFull, ServiceSection } from '../lib/supabase';
+import { AddServiceModal } from './AddServiceModal';
 
 interface ProductsProps {
   onProductSelect: (productName: string, productType?: string) => void;
 }
 
+// ── نافذة تأكيد الحذف ──────────────────────────────────────────────────────────
+function DeleteConfirmDialog({
+  name, onConfirm, onCancel, deleting,
+}: {
+  name: string; onConfirm: () => void; onCancel: () => void; deleting: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position:'fixed', inset:0, zIndex:10000,
+        background:'rgba(0,0,0,.65)', backdropFilter:'blur(6px)',
+        display:'flex', alignItems:'center', justifyContent:'center', padding:'16px',
+      }}
+      onClick={e => e.target === e.currentTarget && onCancel()}
+    >
+      <div style={{
+        background:'#fff', borderRadius:'20px', padding:'32px',
+        maxWidth:'420px', width:'100%', direction:'rtl',
+        fontFamily:'Tajawal,sans-serif', textAlign:'center',
+        boxShadow:'0 32px 80px rgba(0,0,0,.25)',
+      }}>
+        <div style={{
+          width:'64px', height:'64px', borderRadius:'50%',
+          background:'#fee2e2', display:'flex', alignItems:'center',
+          justifyContent:'center', margin:'0 auto 20px', fontSize:'1.8rem', color:'#dc2626',
+        }}>
+          <i className="fas fa-trash-alt" />
+        </div>
+        <h3 style={{ margin:'0 0 10px', fontSize:'1.2rem', fontWeight:900, color:'#0f172a' }}>
+          تأكيد الحذف
+        </h3>
+        <p style={{ margin:'0 0 24px', color:'#64748b', fontSize:'.95rem', lineHeight:1.6 }}>
+          هل أنت متأكد من حذف المنتج<br />
+          <strong style={{ color:'#0f172a' }}>"{name}"</strong>؟<br />
+          <span style={{ fontSize:'.82rem', color:'#ef4444' }}>لا يمكن التراجع عن هذا الإجراء.</span>
+        </p>
+        <div style={{ display:'flex', gap:'12px', justifyContent:'center' }}>
+          <button
+            onClick={onCancel}
+            disabled={deleting}
+            style={{
+              padding:'10px 24px', borderRadius:'10px',
+              border:'1px solid #e2e8f0', background:'#f8fafc',
+              cursor: deleting ? 'not-allowed' : 'pointer',
+              fontFamily:'Tajawal,sans-serif', fontWeight:700, color:'#64748b', fontSize:'.9rem',
+            }}
+          >
+            إلغاء
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={deleting}
+            style={{
+              padding:'10px 28px', borderRadius:'10px', border:'none',
+              background: deleting ? '#94a3b8' : 'linear-gradient(135deg,#ef4444,#dc2626)',
+              color:'#fff', cursor: deleting ? 'not-allowed' : 'pointer',
+              fontFamily:'Tajawal,sans-serif', fontWeight:700, fontSize:'.9rem',
+              display:'flex', alignItems:'center', gap:'8px',
+            }}
+          >
+            {deleting
+              ? <><i className="fas fa-spinner fa-spin" />جاري الحذف...</>
+              : <><i className="fas fa-trash-alt" />نعم، احذف</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Products({ onProductSelect }: ProductsProps) {
-  const products: Product[] = [
-    {
-      emoji: '1️⃣',
-      title: 'منتج عون',
-      description:
-        'تقديم دعم فوري ومساندة احترافية سريعة للجمعيات الأهلية لتجاوز التحديات الإدارية والفنية اليومية بكفاءة عالية.',
-      goal: 'تقديم استشارات مباشرة وحلول عملية فورية لضمان استمرارية الأعمال.',
-      badge: 'منتج تأهيلي للتقديم على صندوق دعم الجمعيات',
-      badgeIcon: 'fa-check-double',
-      features: [
-        'استشارات مباشرة لحل التحديات الطارئة.',
-        'متابعة تنفيذ المهام لضمان الجودة.',
-        'تقارير إنجاز توضح النتائج المحققة.',
-        'توفير الجهد والوقت عبر خبرات عملية.',
-      ],
-      type: 'عون',
-    },
-    {
-      emoji: '2️⃣',
-      title: 'بكج المساعدة الإدارية',
-      description:
-        'بناء منظومة إدارية متكاملة للكيان، تبدأ من التخطيط الاستراتيجي وصولاً إلى التنفيذ التشغيلي وتصميم المبادرات النوعية.',
-      goal: 'بناء أساس إداري متين يضمن جاهزية الجمعية للاعتماد والنمو.',
-      featuresLabel: 'مخرجات البكج:',
-      features: [
-        'إعداد الخطط الاستراتيجية والتشغيلية.',
-        'تجهيز ملفات الحوكمة والسياسات الداخلية.',
-        'تصميم مشاريع تنموية تلبي احتياج المجتمع.',
-        'رفع كفاءة الأداء المؤسسي للجمعية.',
-      ],
-      type: 'product',
-    },
-    {
-      emoji: '3️⃣',
-      title: 'منتج الجهات المانحة',
-      description:
-        'تجسير العلاقة بين الجمعية والمانحين عبر صياغة مشاريع ومبادرات احترافية تتوافق تماماً مع اشتراطات ومعايير الصناديق الداعمة.',
-      goal: 'تعظيم فرص الحصول على الدعم المالي وتعزيز ثقة المانحين.',
-      featuresLabel: 'المميزات:',
-      features: [
-        'دراسة دقيقة لمتطلبات الصناديق والمانحين.',
-        'صياغة عروض المشاريع بمعايير احترافية.',
-        'بناء مؤشرات قياس الأثر لضمان القبول.',
-        'متابعة الرفع والتقديم حتى صدور القرار.',
-      ],
-      type: 'product',
-    },
-    {
-      emoji: '4️⃣',
-      title: 'المنسق المؤسسي للمانحين',
-      description:
-        'تمثيل احترافي للمؤسسات المانحة لإدارة محافظهم التنموية وضمان تنفيذ المشاريع المدعومة وفق أعلى معايير الحوكمة والكفاءة المالية.',
-      goal: 'إدارة المشاريع نيابة عن المانح لضمان تحقيق الأثر التنموي المستدام.',
-      featuresLabel: 'الضمانات:',
-      features: [
-        'دراسة مهنية دقيقة للمشاريع المتقدمة.',
-        'متابعة التنفيذ الميداني والإداري.',
-        'تقارير احترافية دورية قابلة للقياس.',
-        'فريق متخصص بخبرة +10 سنوات.',
-      ],
-      type: 'product',
-    },
-    {
-      emoji: '5️⃣',
-      title: 'بكج المنحة التأسيسية',
-      description:
-        'خدمة متكاملة مصممة خصيصاً للجمعيات الناشئة لرفع جاهزيتها وتجهيز ملفاتها للحصول على دعم صندوق دعم الجمعيات باحترافية عالية.',
-      goal: 'رفع جاهزية الجمعية الناشئة وتجهيز ملفاتها للحصول على دعم الصندوق.',
-      badge: 'منتج للحصول على دعم صندوق دعم الجمعيات',
-      badgeIcon: 'fa-check-double',
-      featuresLabel: 'مخرجات الخدمة:',
-      features: [
-        'رفع الجاهزية حسب متطلبات صندوق الدعم.',
-        'إعداد ملف المنحة التأسيسية باحترافية.',
-        'التقديم والمتابعة حتى إغلاق الملف.',
-        'زيادة فرص الحصول على الدعم المالي.',
-      ],
-      extraNote: 'ميزة إضافية: استرداد 50٪ من قيمة الخدمة عند الاشتراك في منتج عون لعام 2027هـ.',
-      extraNoteIcon: 'fa-gift',
-      extraNoteColor: '#c5a059',
-      extraNoteBorderColor: '#c5a059',
-      price: 'الرسوم: 10,000 ريال فقط',
-      priceColor: '#0891b2',
-      type: 'product',
-    },
-    {
-      emoji: '6️⃣',
-      title: 'منحة المصروفات التشغيلية',
-      description:
-        'خدمة احترافية لتجهيز ورفع طلبات منح التشغيل، نضمن من خلالها جودة الملفات وتفادي أخطاء الرفض التقنية والإدارية لضمان استدامة جمعيتك.',
-      goal: 'ضمان جودة ملفات التشغيل وتفادي أسباب الرفض لتعزيز استدامة الجمعية.',
-      goalIcon: 'fa-shield-alt',
-      badge: 'مخصص للجمعيات (سنة - سنتين)',
-      badgeIcon: 'fa-hand-holding-heart',
-      featuresLabel: 'مخرجات الخدمة:',
-      features: [
-        'إعداد الملف الإداري وفق معايير الجهات المانحة.',
-        'رفع الطلب عبر المنصات الرسمية بدقة عالية.',
-        'متابعة حالة الطلب حتى صدور قرار الدعم.',
-        'إغلاق المنحة وتقديم التقارير الختامية المطلوبة.',
-      ],
-      extraNote: 'ضمان المساعدة: الدفع مؤجل ومتاح فقط بعد نزول الدعم في حساب الجمعية.',
-      extraNoteIcon: 'fa-shield-alt',
-      extraNoteColor: '#0891b2',
-      extraNoteBorderColor: '#0891b2',
-      price: 'لشركاء عون: 8,500 ريال | السعر العام: 15,000 ريال',
-      priceColor: '#c5a059',
-      type: 'product',
-    },
-    
-    {
-      emoji: '🌟',
-      title: 'منحة تطوع المحترفين',
-      description:
-        'فرصة استثنائية من صندوق دعم الجمعيات، صُممت خصيصًا لتمكين الجهات الأهلية عبر خبراء متخصصين يرفعون كفاءتها التشغيلية ويصنعون أثرًا تنمويًا حقيقيًا.',
-      goal: 'رفع جاهزية جمعيتك للاستفادة من منحة تطوع المحترفين وتحقيق أثر مستدام وقابل للقياس.',
-      goalIcon: 'fa-star',
-      goalColor: '#0891b2',
-      badge: 'من صندوق دعم الجمعيات',
-      badgeIcon: 'fa-hand-holding-heart',
-      featuresLabel: 'خدماتنا في هذه المنحة:',
-      features: [
-        'تجهيز ملف التقديم باحترافية عالية.',
-        'رفع جاهزية الجمعية لمتطلبات المنحة.',
-        'إعداد المستندات والمتطلبات اللازمة.',
-        'تحسين فرص القبول وتحقيق العائد المالي للجمعية.',
-        'متابعة كاملة من البداية حتى الإغلاق.',
-      ],
-      extraNote: 'المقاعد محدودة … والفرص تُمنح للجاهزين فقط. لا تضيع الفرصة!',
-      extraNoteIcon: 'fa-exclamation-triangle',
-      extraNoteColor: '#c5a059',
-      extraNoteBorderColor: '#c5a059',
-     
-      priceColor: '#0891b2',
-      type: 'product',
-    },
-    {
-      emoji: '🚀',
-      title: 'برنامج تأهيل برو',
-      description:
-        'برنامج استراتيجي متكامل يُعنى برفع جاهزية الجمعيات الأهلية وفق معايير دقيقة، لبناء مشاريع نوعية تعزز ثقة الجهات المانحة وتضمن الاستدامة.',
-      goal: 'تمكين الكيانات من المنافسة الاحترافية على فرص الدعم والتمويل.',
-      featuresLabel: 'مخرجات البرنامج:',
-      features: [
-        'تأهيل شامل للحوكمة والامتثال.',
-        'بناء مصفوفة الصلاحيات الإدارية.',
-        'تجهيز ملفات استحقاق دعم الصناديق.',
-        'تصميم مشاريع تنموية ذات أثر ملموس.',
-        'إعداد خطط الاستدامة المالية.',
-        'دعم فني واستشاري طوال البرنامج.',
-      ],
-      highlight: true,
-      type: 'product',
-    },
-  ];
+  const { isAdminOrEmployee, isAdmin } = useAuth();
+  const [products, setProducts]         = useState<ServiceFull[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [showModal, setShowModal]       = useState(false);
+  const [editingProduct, setEditingProduct]   = useState<ServiceFull | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState<ServiceFull | null>(null);
+  const [isDeleting, setIsDeleting]     = useState(false);
 
-  const handleClick = (product: Product) => {
-    onProductSelect(product.title, product.type || 'product');
-  };
+  const load = useCallback(async () => {
+    try {
+      const all = await fetchServicesWithSections();
+      setProducts(all.filter(s => s.category === 'منتج'));
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, []);
 
-  const handleKeyDown = (e: React.KeyboardEvent, product: Product) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      onProductSelect(product.title, product.type || 'product');
+  useEffect(() => {
+    load();
+    const sub = subscribeToServices(() => load(), 'products-realtime');
+    return () => { sub.unsubscribe(); };
+  }, [load]);
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingProduct) return;
+    setIsDeleting(true);
+    try {
+      await deleteService(deletingProduct.service_id);
+      setDeletingProduct(null);
+      await load();
+    } catch (e: any) {
+      console.error(e);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
-  return (
-    <section className="products-section" id="products" aria-labelledby="productsTitle">
-      <div className="section-header" data-aos="fade-up">
-        <h2 id="productsTitle">منتجاتنا النوعيّة</h2>
-        <p>حلول متقدمة ومبتكرة… لتأمين الاستدامة وتعظيم التأثير</p>
-      </div>
+  const handleAdminAction = (e: React.MouseEvent, action: () => void) => {
+    e.stopPropagation();
+    action();
+  };
 
-      <div className="products-grid" data-aos="fade-up">
-        {products.map((product, index) => (
-          <article
-            key={index}
-            className={`product-item clickable-card ${product.highlight ? 'highlight' : ''}`}
-            onClick={() => handleClick(product)}
-            onKeyDown={(e) => handleKeyDown(e, product)}
-            role="button"
-            tabIndex={0}
-            aria-label={product.title}
-            data-aos="fade-up"
-          >
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '40px', alignItems: 'flex-start' }}>
-
-              {/* ── العمود الأيمن ── */}
-              <div style={{ flex: '1.2', minWidth: '280px' }}>
-
-                {/* عنوان + badge */}
-                <div style={{ marginBottom: '15px' }}>
-                  <h3>
-                    {product.emoji} {product.title}
-                    {product.badge && (
-                      <><br />
-                        <span
-                          className="gov-badge"
-                          style={{
-                            fontSize: '0.85rem',
-                            padding: '4px 10px',
-                            display: 'inline-block',
-                            marginTop: '6px',
-                            borderRadius: '4px',
-                          }}
-                        >
-                          {product.badgeIcon && (
-                            <i className={`fas ${product.badgeIcon}`} style={{ marginLeft: '5px' }} />
-                          )}
-                          {product.badge}
-                        </span>
-                      </>
-                    )}
-                  </h3>
-                </div>
-
-                <p>{product.description}</p>
-
-                {/* بنر الهدف */}
-                <div
-                  style={{
-                    marginTop: '25px',
-                    padding: '12px',
-                    borderRight: `4px solid ${product.goalColor ?? '#0891b2'}`,
-                    background: `rgba(8, 145, 178, 0.05)`,
-                    borderRadius: '4px',
-                  }}
-                >
-                  <p style={{ margin: 0, fontSize: '0.95rem', color: product.goalColor ?? '#0891b2' }}>
-                    <strong>
-                      <i className={`fas ${product.goalIcon ?? 'fa-bullseye'}`} /> الهدف:
-                    </strong>{' '}
-                    {product.goal}
-                  </p>
-                </div>
-
-                {/* ملاحظة إضافية (اختيارية) */}
-                {product.extraNote && (
-                  <div
-                    style={{
-                      marginTop: '15px',
-                      padding: '12px',
-                      borderRight: `4px solid ${product.extraNoteBorderColor ?? '#c5a059'}`,
-                      background: `rgba(197, 160, 89, 0.05)`,
-                      borderRadius: '4px',
-                    }}
-                  >
-                    <p style={{ margin: 0, fontSize: '0.95rem', color: product.extraNoteColor ?? '#c5a059' }}>
-                      <strong>
-                        {product.extraNoteIcon && (
-                          <i className={`fas ${product.extraNoteIcon}`} style={{ marginLeft: '4px' }} />
-                        )}
-                      </strong>{' '}
-                      {product.extraNote}
-                    </p>
-                  </div>
-                )}
-
-                {/* السعر (اختياري) */}
-                {product.price && (
-                  <div
-                    style={{
-                      marginTop: '15px',
-                      fontWeight: 'bold',
-                      color: product.priceColor ?? '#0891b2',
-                    }}
-                  >
-                    <i className="fas fa-tag" style={{ marginLeft: '6px' }} />
-                    {product.price}
-                  </div>
-                )}
-              </div>
-
-              {/* ── العمود الأيسر ── */}
-              <div style={{ flex: '1', minWidth: '280px' }}>
-                <h4 style={{ color: '#c5a059', marginBottom: '15px' }}>
-                  <i className="fas fa-list-check" /> {product.featuresLabel ?? 'المميزات:'}
-                </h4>
-                <ul className="guarantees-list" style={{ listStyle: 'none', padding: 0, display: 'grid', gap: '12px' }}>
-                  {product.features.map((feature, idx) => (
-                    <li key={idx}>
-                      <span>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-            </div>
-          </article>
-        ))}
+  if (loading) return (
+    <section className="products-section" id="products">
+      <div style={{ textAlign:'center', padding:'80px 0', color:'#c5a059', fontFamily:'Tajawal,sans-serif' }}>
+        <i className="fas fa-spinner fa-spin" style={{ fontSize:'2rem', display:'block', marginBottom:'12px' }} />
+        جاري تحميل المنتجات...
       </div>
     </section>
+  );
+
+  return (
+    <>
+      <style>{`
+        .product-admin-actions{
+          position:absolute; top:14px; left:14px;
+          display:flex; gap:6px;
+          opacity:0; transition:opacity .25s ease; z-index:10;
+        }
+        .product-item:hover .product-admin-actions,
+        .clickable-card:hover .product-admin-actions { opacity:1; }
+        .product-action-btn{
+          width:34px; height:34px; border-radius:9px; border:none;
+          cursor:pointer; display:flex; align-items:center; justify-content:center;
+          font-size:.82rem; transition:all .2s ease;
+        }
+        .product-action-btn.edit{ background:rgba(197,160,89,.15); color:#c5a059; }
+        .product-action-btn.edit:hover{ background:#c5a059; color:#fff; transform:scale(1.1); }
+        .product-action-btn.del{ background:rgba(239,68,68,.1); color:#ef4444; }
+        .product-action-btn.del:hover{ background:#ef4444; color:#fff; transform:scale(1.1); }
+      `}</style>
+
+      <section className="products-section" id="products" aria-labelledby="productsTitle">
+        <div className="section-header" data-aos="fade-up">
+          <h2 id="productsTitle">منتجاتنا النوعيّة</h2>
+          <p>حلول متقدمة ومبتكرة… لتأمين الاستدامة وتعظيم التأثير</p>
+        </div>
+
+        <div className="products-grid" data-aos="fade-up">
+          {products.map((product) => (
+            <article
+              key={product.service_id}
+              className={`product-item clickable-card ${product.highlight ? 'highlight' : ''}`}
+              style={{ position:'relative' }}
+              onClick={() => onProductSelect(product.service_name, product.service_name)}
+              onKeyDown={e => { if (e.key==='Enter'||e.key===' '){e.preventDefault();onProductSelect(product.service_name, product.service_name)} }}
+              role="button" tabIndex={0} aria-label={product.service_name} data-aos="fade-up"
+            >
+              {/* ── أزرار الأدمن (تعديل + حذف) ── */}
+              {isAdmin && (
+                <div className="product-admin-actions">
+                  <button
+                    className="product-action-btn edit"
+                    title="تعديل المنتج"
+                    onClick={e => handleAdminAction(e, () => setEditingProduct(product))}
+                  >
+                    <i className="fas fa-pen" />
+                  </button>
+                  <button
+                    className="product-action-btn del"
+                    title="حذف المنتج"
+                    onClick={e => handleAdminAction(e, () => setDeletingProduct(product))}
+                  >
+                    <i className="fas fa-trash-alt" />
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display:'flex', flexWrap:'wrap', gap:'40px', alignItems:'flex-start' }}>
+
+                {/* ── العمود الأيمن ── */}
+                <div style={{ flex:'1.2', minWidth:'280px' }}>
+
+                  {/* العنوان + badge */}
+                  <div style={{ marginBottom:'15px' }}>
+                    <h3>
+                      {product.emoji} {product.service_name}
+                      {product.badge?.trim() && (
+                        <><br />
+                          <span className="gov-badge" style={{ fontSize:'.85rem', padding:'4px 10px', display:'inline-block', marginTop:'6px', borderRadius:'4px' }}>
+                            {product.badge_icon && <i className={`fas ${product.badge_icon}`} style={{ marginLeft:'5px' }} />}
+                            {product.badge}
+                          </span>
+                        </>
+                      )}
+                    </h3>
+                  </div>
+
+                  {/* الوصف */}
+                  <p>{product.service_description}</p>
+
+                  {/* ── الأقسام المرنة (sections) ── */}
+                  {(product.sections ?? []).map((sec: ServiceSection, i: number) => (
+                    <div key={i} style={{
+                      marginTop: i === 0 ? '25px' : '12px',
+                      padding: '12px',
+                      borderRight: `4px solid ${sec.color ?? '#0891b2'}`,
+                      background: `${sec.color ?? '#0891b2'}0d`,
+                      borderRadius: '4px',
+                    }}>
+                      <p style={{ margin:0, fontSize:'.95rem', color: sec.color ?? '#0891b2' }}>
+                        <strong>
+                          {sec.icon && <i className={`fas ${sec.icon}`} style={{ marginLeft:'4px' }} />}
+                          {' '}{sec.label}:
+                        </strong>{' '}
+                        {sec.value}
+                      </p>
+                      {sec.items && sec.items.length > 0 && (
+                        <ul style={{ margin:'8px 0 0', paddingRight:'16px', color: sec.color ?? '#0891b2', fontSize:'.88rem' }}>
+                          {sec.items.map((item, j) => <li key={j}>{item}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+          ))}
+
+          {/* بطاقة الإضافة — للأدمن والموظفين */}
+          {isAdminOrEmployee && (
+            <article
+              className="product-item clickable-card"
+              onClick={() => setShowModal(true)}
+              onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setShowModal(true)}}}
+              role="button" tabIndex={0} aria-label="إضافة منتج جديد" data-aos="fade-up"
+              style={{
+                display:'flex', alignItems:'center', justifyContent:'center',
+                minHeight:'200px', flexDirection:'column', gap:'16px',
+                border:'2px dashed rgba(197,160,89,.4)', background:'rgba(197,160,89,.02)',
+              }}
+            >
+              <div style={{
+                width:'64px', height:'64px', borderRadius:'50%',
+                background:'rgba(197,160,89,.12)', border:'2px solid rgba(197,160,89,.3)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                fontSize:'1.8rem', color:'#c5a059', transition:'all .3s',
+              }}>
+                <i className="fas fa-plus" />
+              </div>
+              <span style={{ fontFamily:'Tajawal,sans-serif', fontWeight:800, color:'#c5a059', fontSize:'1rem' }}>
+                إضافة منتج جديد
+              </span>
+            </article>
+          )}
+        </div>
+      </section>
+
+      {/* مودال الإضافة */}
+      {showModal && (
+        <AddServiceModal
+          defaultCategory="منتج"
+          onClose={() => setShowModal(false)}
+          onSaved={load}
+        />
+      )}
+
+      {/* مودال التعديل — key يجبر React على إعادة تهيئة الحالة عند تغيير المنتج */}
+      {editingProduct && (
+        <AddServiceModal
+          key={`edit-${editingProduct.service_id}`}
+          defaultCategory="منتج"
+          initialData={editingProduct}
+          onClose={() => setEditingProduct(null)}
+          onSaved={() => { setEditingProduct(null); load(); }}
+        />
+      )}
+
+      {/* نافذة تأكيد الحذف */}
+      {deletingProduct && (
+        <DeleteConfirmDialog
+          name={deletingProduct.service_name}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeletingProduct(null)}
+          deleting={isDeleting}
+        />
+      )}
+    </>
   );
 }

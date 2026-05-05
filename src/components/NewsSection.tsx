@@ -160,19 +160,7 @@ const NewsCard = memo(({ item, isAdmin, onDelete, onEdit }: NewsCardProps) => {
 
           {isAdmin && (
             <div className="news-admin-actions">
-              {onEdit && (
-                <button
-                  className="news-icon-btn news-icon-btn--edit"
-                  onClick={handleEdit}
-                  aria-label={`تعديل: ${sanitize(item.title)}`}
-                  title="تعديل الخبر"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                  </svg>
-                </button>
-              )}
+
               <button
                 className="news-icon-btn news-icon-btn--delete"
                 onClick={handleDelete}
@@ -211,8 +199,7 @@ export function NewsSection({
   // إخفاء/إظهار زر التحميل
   useEffect(() => {
     if (loadMoreRef.current) {
-      loadMoreRef.current.style.display =
-        hasMore && !loading ? 'inline-flex' : 'none';
+      loadMoreRef.current.classList.toggle('news-load-more-btn--hidden', !(hasMore && !loading));
     }
   }, [hasMore, loading]);
 
@@ -232,9 +219,7 @@ export function NewsSection({
         {/* ── Grid ── */}
         <div
           className="news-grid"
-          role="list"
           aria-label="قائمة الأخبار"
-          aria-busy={loading}
         >
           {loading && news.length === 0 ? (
             <>
@@ -243,7 +228,7 @@ export function NewsSection({
               <SkeletonCard />
             </>
           ) : news.length === 0 ? (
-            <p className="news-empty" role="status">
+            <p className="news-empty" aria-live="polite">
               لا توجد أخبار منشورة حالياً.
             </p>
           ) : (
@@ -267,7 +252,7 @@ export function NewsSection({
             onClick={onLoadMore}
             disabled={loading}
             aria-label="عرض المزيد من الأخبار"
-            style={{ display: 'none' }}
+            
           >
             {loading && (
               <svg className="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">

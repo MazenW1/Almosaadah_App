@@ -1,3 +1,4 @@
+/* stylelint-disable */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -195,8 +196,8 @@
 /* ===== Glass Effect Base ===== */
 .glass {
   background: var(--glass-bg-strong);
-  backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--glass-shadow);
@@ -220,8 +221,8 @@ header {
   z-index: 1000;
   padding: 14px 5%;
   background: rgba(240, 249, 255, 0.75);
-  backdrop-filter: blur(24px) saturate(200%);
   -webkit-backdrop-filter: blur(24px) saturate(200%);
+  backdrop-filter: blur(24px) saturate(200%);
   border-bottom: 1px solid rgba(6, 182, 212, 0.2);
   box-shadow:
     0 4px 24px rgba(6, 182, 212, 0.1),
@@ -266,6 +267,7 @@ header::after {
   padding: 2px;
   transition: all 0.3s ease;
   background: rgba(255, 255, 255, 0.5);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
 
@@ -288,6 +290,7 @@ header::after {
   @apply absolute inset-0 opacity-0 transition-opacity duration-300 -z-10;
   border-radius: var(--radius-sm);
   background: rgba(6, 182, 212, 0.1);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
@@ -343,8 +346,8 @@ header::after {
 
   /* Glass Card */
   background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-top: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow:
@@ -374,6 +377,7 @@ header::after {
     0 0 40px rgba(6, 182, 212, 0.1),
     inset 0 0 20px rgba(255, 255, 255, 0.5);
   background: rgba(255, 255, 255, 0.4);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   padding: 10px;
   transition: all 0.4s ease;
@@ -396,6 +400,7 @@ header::after {
   border-radius: 50px;
   margin-bottom: 24px;
   background: rgba(6, 182, 212, 0.1);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(6, 182, 212, 0.25);
   color: var(--gov-dark);
@@ -500,8 +505,8 @@ header::after {
 .btn-secondary {
   color: var(--gov-dark);
   background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   border: 1.5px solid rgba(6, 182, 212, 0.3);
   box-shadow:
     0 4px 16px rgba(6, 182, 212, 0.12),
@@ -614,8 +619,8 @@ header::after {
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 
   background: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-top: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow:
@@ -678,6 +683,7 @@ header::after {
   overflow: hidden;
 
   background: rgba(6, 182, 212, 0.1);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(6, 182, 212, 0.2);
   box-shadow: 0 4px 16px rgba(6, 182, 212, 0.12);
@@ -754,8 +760,8 @@ header::after {
   overflow: hidden;
 
   background: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-top: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow:
@@ -814,8 +820,8 @@ footer {
   overflow: hidden;
 
   background: rgba(15, 23, 42, 0.85);
-  backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
   border-top: 1px solid rgba(6, 182, 212, 0.2);
 }
 
@@ -847,6 +853,7 @@ footer::before {
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   padding: 6px;
   background: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   transition: all 0.3s ease;
 }
@@ -883,6 +890,7 @@ footer p {
   overflow: hidden;
 
   background: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
@@ -964,8 +972,8 @@ footer p {
   will-change: transform;
 
   background: rgba(255, 255, 255, 0.48);
-  backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow:
     0 8px 32px rgba(6, 182, 212, 0.08),
@@ -1082,8 +1090,8 @@ footer p {
   border-radius: 30px;
   color: var(--gov-dark);
   background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   border: 1px solid rgba(6, 182, 212, 0.25);
   box-shadow: 0 2px 8px rgba(6, 182, 212, 0.1);
 }
@@ -1100,8 +1108,8 @@ footer p {
   border-radius: 30px;
   color: #fff;
   background: rgba(8, 145, 178, 0.84);
-  backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.25);
   box-shadow: 0 2px 8px rgba(8, 145, 178, 0.25);
 }
@@ -1273,8 +1281,8 @@ footer p {
   border-radius: 50px;
   border: 1.5px solid rgba(6, 182, 212, 0.3);
   background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   color: var(--gov-dark);
   font-family: 'Tajawal', sans-serif;
   font-size: 0.95rem;
@@ -1385,6 +1393,7 @@ footer p {
   padding: 4px 12px; border-radius: 30px;
   color: var(--gov-dark);
   background: rgba(255, 255, 255, 0.88);
+  -webkit-backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(6, 182, 212, 0.25);
   box-shadow: 0 2px 8px rgba(6, 182, 212, 0.1);
@@ -1474,6 +1483,7 @@ footer p {
   padding: 13px 36px; border-radius: 50px;
   border: 1.5px solid rgba(6, 182, 212, 0.3);
   background: rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   color: var(--gov-dark); font-family: 'Tajawal', sans-serif;
   font-size: 0.95rem; font-weight: 700; cursor: pointer;
@@ -1541,8 +1551,8 @@ footer p {
   border-radius: var(--radius-xl);
 
   background: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
     0 16px 48px rgba(6, 182, 212, 0.1),
@@ -1560,8 +1570,8 @@ footer p {
   border-radius: var(--radius-lg);
 
   background: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow: 0 8px 24px rgba(6, 182, 212, 0.08);
   transition: all 0.3s ease;
@@ -1600,6 +1610,7 @@ footer p {
   outline: none;
 
   background: rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: 1.5px solid rgba(6, 182, 212, 0.2);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.04);
@@ -1649,8 +1660,8 @@ footer p {
   overflow: hidden;
 
   background: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow: 0 4px 16px rgba(6, 182, 212, 0.08);
 }
@@ -1694,6 +1705,7 @@ footer p {
   overflow: hidden;
 
   background: rgba(0,0,0,0.8);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border: 1px solid rgba(6, 182, 212, 0.2);
   box-shadow:
@@ -1732,8 +1744,8 @@ footer p {
   transition: all 0.35s ease;
 
   background: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-top: 2px solid rgba(6, 182, 212, 0.3);
   box-shadow:
@@ -1832,6 +1844,7 @@ footer p {
 .mobile-menu-btn {
   display: none;
   background: rgba(255, 255, 255, 0.3);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(6, 182, 212, 0.2);
   color: var(--text-dark);
@@ -1858,8 +1871,8 @@ footer p {
   transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 
   background: rgba(240, 249, 255, 0.92);
-  backdrop-filter: blur(28px) saturate(200%);
   -webkit-backdrop-filter: blur(28px) saturate(200%);
+  backdrop-filter: blur(28px) saturate(200%);
   border-left: 2px solid rgba(6, 182, 212, 0.3);
   box-shadow: -10px 0 40px rgba(6, 182, 212, 0.1);
   display: flex;
@@ -1910,6 +1923,7 @@ footer p {
   justify-content: center;
   border-radius: 50%;
   transition: all 0.4s ease;
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
 
@@ -1924,8 +1938,8 @@ footer p {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   z-index: 2000;
   opacity: 0;
   pointer-events: none;
@@ -1960,8 +1974,8 @@ footer p {
   animation: slide-down 0.4s ease;
 
   background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.08),
@@ -2034,6 +2048,7 @@ body.admin-mode .admin-only {
   position: relative;
 
   background: rgba(255, 255, 255, 0.35);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.4);
   box-shadow: 0 4px 16px rgba(6, 182, 212, 0.1);
@@ -2126,8 +2141,8 @@ body.admin-mode .admin-only {
 @media (max-width: 768px) {
   /* إلغاء backdrop-filter على الهيدر — أكبر سبب للحرارة */
   header {
-    backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
     background: rgba(240, 249, 255, 0.97) !important;
   }
   header.scrolled {
@@ -2140,8 +2155,8 @@ body.admin-mode .admin-only {
 
   /* إلغاء backdrop-filter من الـ glass elements */
   .glass, .glass-card {
-    backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
     background: rgba(255, 255, 255, 0.96) !important;
   }
   html.dark .glass, html.dark .glass-card {
@@ -2150,22 +2165,22 @@ body.admin-mode .admin-only {
 
   /* إلغاء backdrop-filter من الـ overlay */
   .overlay, .modal-overlay {
-    backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
     background: rgba(15, 23, 42, 0.75) !important;
   }
 
   /* إلغاء backdrop-filter من الـ toast */
   .toast {
-    backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
     background: rgba(255, 255, 255, 0.98) !important;
   }
 
   /* إيقاف logo-img backdrop */
   .logo-img {
-    backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
   }
 
   /* إلغاء hover effects الثقيلة على الجوال */
@@ -2194,8 +2209,8 @@ body.admin-mode .admin-only {
 
   /* modal من الأسفل على الجوال */
   .modal-container {
-    backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
     background: rgba(255, 255, 255, 0.99) !important;
   }
   html.dark .modal-container {
@@ -2236,8 +2251,8 @@ html.dark body {
   align-items: center;
   justify-content: center;
   background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   padding: 20px;
   overflow-y: auto;
   opacity: 0;
@@ -2256,8 +2271,8 @@ html.dark body {
   max-width: 420px;
   margin: auto;
   background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(6, 182, 212, 0.2);
   border-radius: 20px;
   box-shadow:
@@ -2282,6 +2297,7 @@ html.dark body {
   outline: none;
   transition: all 0.3s ease;
   background: rgba(255, 255, 255, 0.7);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   border: 1.5px solid rgba(6, 182, 212, 0.2);
   box-sizing: border-box;
@@ -2294,3 +2310,8 @@ html.dark body {
 }
 
 .mb-4 { margin-bottom: 16px; }
+
+/* App root isolation */
+.app-root {
+  isolation: isolate;
+}

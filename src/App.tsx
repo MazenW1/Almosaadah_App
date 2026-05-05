@@ -243,8 +243,11 @@ function AppInner() {
       return;
     }
     setSelectedService(serviceName);
-    setSelectedProductType(type === 'عون' ? 'عون' : undefined);
-    setIsProduct(type === 'عون' || type === 'product');
+    // type يأتي الآن كاسم المنتج مباشرة من service_name
+    const isAwnType = type === 'عون' || (typeof type === 'string' && type.includes('عون'));
+    const isProductType = type === 'منتج' || type === 'product' || isAwnType;
+    setSelectedProductType(isAwnType ? 'عون' : undefined);
+    setIsProduct(isProductType);
     setIsServiceModalOpen(true);
   };
 
@@ -299,7 +302,7 @@ function AppInner() {
 
   // ─── Handle News Delete ───────────────────────────────────────────────────────
   const handleDeleteNews = async (id: string) => {
-    if (!isAdmin && !isEmployee) { showToast('غير مصرح لك بالحذف!', 'error'); return; }
+    if (!isAdmin) { showToast('غير مصرح لك بالحذف!', 'error'); return; }
     if (!confirm('هل أنت متأكد من حذف هذا الخبر نهائياً؟')) return;
     try {
       await deleteNews(id);
@@ -312,7 +315,7 @@ function AppInner() {
   // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <ErrorBoundary>
-      <div className="min-h-screen font-tajawal" style={{ isolation: 'isolate' }}>
+      <div className="min-h-screen font-tajawal app-root">
 
         <BackgroundAnimation isDarkMode={isDarkMode} isPaused={isAnyModalOpen} />
         <ToastContainer toasts={toasts} onRemove={removeToast} />
@@ -344,9 +347,7 @@ function AppInner() {
                   hasMore={hasMore}
                   onLoadMore={loadMore}
                   onDeleteNews={handleDeleteNews}
-                  onEditNews={updateNews}
-                  onCreateNews={createNews}
-                  isAdmin={isAdmin || isEmployee}
+                  isAdmin={isAdmin}
                 />
                 <Stats />
                 <Footer />
