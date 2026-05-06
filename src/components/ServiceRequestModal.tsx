@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../hooks/useAuth';
 
 interface ServiceData {
   description: string;
@@ -42,9 +43,13 @@ export function ServiceRequestModal({
   isProduct = false,
   productType,
 }: ServiceRequestModalProps) {
+  const { isAdmin, isEmployee } = useAuth();
+  const isStaff = isAdmin || isEmployee;
+
   const [loading, setLoading] = useState(false);
   const [service, setService] = useState<ServiceData | null>(null);
   const [selectedPackage, setSelectedPackage] = useState<string>('');
+  const [packageError, setPackageError] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [duplicateAlert, setDuplicateAlert] = useState<{ show: boolean; statusText: string }>({ show: false, statusText: '' });
   const [successScreen, setSuccessScreen] = useState(false);
@@ -104,7 +109,7 @@ export function ServiceRequestModal({
     }
 
     if (isAwnProduct && !selectedPackage) {
-      alert('يرجى اختيار الباقة أولاً');
+      setPackageError(true);
       return;
     }
 
@@ -235,6 +240,7 @@ export function ServiceRequestModal({
 
           <button
             type="button"
+            title="إغلاق التنبيه"
             onClick={() => setDuplicateAlert({ show: false, statusText: '' })}
             style={{
               background: 'linear-gradient(135deg, #ea580c, #f97316)',
@@ -256,7 +262,127 @@ export function ServiceRequestModal({
 
   if (!isOpen) return null;
 
-  // ── شاشة النجاح ──────────────────────────────────────────────────────────
+  // ── شاشة الحجب للأدمن / الموظف ───────────────────────────────────────────
+  if (isStaff) {
+    const roleLabel = isAdmin ? 'المدير' : 'الموظف';
+    const roleIcon  = isAdmin ? 'fa-shield-alt' : 'fa-user-tie';
+    const itemLabel = isProduct ? 'المنتج' : 'الخدمة';
+    return (
+      <div style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(7,15,30,0.92)',
+        backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+        zIndex: 9999,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '20px',
+      }}
+        onClick={e => e.target === e.currentTarget && onClose()}
+      >
+        <div style={{
+          background: 'linear-gradient(145deg, #0c2340, #0a3a5c)',
+          border: '1.5px solid rgba(14,165,233,0.35)',
+          borderRadius: '28px', padding: '44px 40px 40px',
+          width: '90%', maxWidth: '460px', textAlign: 'center',
+          boxShadow: '0 40px 100px rgba(8,145,178,0.35), inset 0 1px 0 rgba(255,255,255,0.07)',
+          animation: 'staffBlockPop 0.45s cubic-bezier(.4,1.4,.6,1) both',
+          position: 'relative', overflow: 'hidden', direction: 'rtl',
+        }}>
+          {/* زخارف خلفية */}
+          <div style={{ position:'absolute', top:'-60px', right:'-60px', width:'200px', height:'200px', borderRadius:'50%', background:'radial-gradient(circle, rgba(14,165,233,0.18) 0%, transparent 70%)', pointerEvents:'none' }} />
+          <div style={{ position:'absolute', bottom:'-50px', left:'-50px', width:'180px', height:'180px', borderRadius:'50%', background:'radial-gradient(circle, rgba(56,189,248,0.1) 0%, transparent 70%)', pointerEvents:'none' }} />
+
+          {/* شارة الدور */}
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            background: 'rgba(14,165,233,0.15)', border: '1px solid rgba(14,165,233,0.3)',
+            borderRadius: '50px', padding: '5px 16px', marginBottom: '26px',
+          }}>
+            <i className={`fas ${roleIcon}`} style={{ color: '#38bdf8', fontSize: '11px' }} />
+            <span style={{ fontFamily:"'Tajawal',sans-serif", fontSize:'12px', fontWeight:'700', color:'#7dd3fc' }}>
+              وضع {roleLabel}
+            </span>
+          </div>
+
+          {/* أيقونة القفل */}
+          <div style={{ position:'relative', width:'90px', height:'90px', margin:'0 auto 26px' }}>
+            <div style={{
+              position:'absolute', inset:'-10px', borderRadius:'50%',
+              background:'rgba(14,165,233,0.15)',
+              animation:'staffRingPulse 2.2s ease-in-out infinite',
+            }} />
+            <div style={{
+              width:'90px', height:'90px',
+              background:'linear-gradient(135deg, #0ea5e9, #0284c7)',
+              borderRadius:'50%', position:'relative',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              boxShadow:'0 16px 48px rgba(8,145,178,0.5)',
+            }}>
+              <i className="fas fa-lock" style={{ color:'#fff', fontSize:'30px' }} />
+            </div>
+          </div>
+
+          {/* النص */}
+          <h2 style={{
+            fontFamily:"'Tajawal',sans-serif", fontSize:'20px', fontWeight:'900',
+            color:'#e0f2fe', margin:'0 0 12px', lineHeight:1.4,
+          }}>
+            هذه الميزة للعملاء فقط
+          </h2>
+          <p style={{
+            fontFamily:"'Tajawal',sans-serif", fontSize:'14px',
+            color:'#7dd3fc', fontWeight:'500', lineHeight:1.8, margin:'0 0 26px',
+          }}>
+            طلب {itemLabel} متاح للعملاء المسجّلين.<br />
+            بإمكانك إدارة الطلبات من{' '}
+            <strong style={{ color:'#bae6fd' }}>لوحة التحكم</strong>.
+          </p>
+
+          {/* بطاقة تلميح */}
+          <div style={{
+            background:'rgba(255,255,255,0.04)', border:'1px solid rgba(14,165,233,0.2)',
+            borderRadius:'14px', padding:'14px 18px', marginBottom:'28px',
+            display:'flex', alignItems:'center', gap:'12px', textAlign:'right',
+          }}>
+            <i className="fas fa-lightbulb" style={{ color:'#fbbf24', fontSize:'18px', flexShrink:0 }} />
+            <p style={{ margin:0, fontFamily:"'Tajawal',sans-serif", fontSize:'13px', color:'#7dd3fc', fontWeight:'500', lineHeight:1.7 }}>
+              يمكنك إضافة طلب يدوياً للعميل مباشرةً من لوحة إدارة الطلبات
+            </p>
+          </div>
+
+          {/* زر الإغلاق */}
+          <button
+            type="button"
+            title="إغلاق"
+            onClick={onClose}
+            style={{
+              width:'100%', padding:'14px',
+              background:'linear-gradient(135deg, #0ea5e9, #0284c7)', border:'none',
+              borderRadius:'14px', color:'#fff',
+              fontFamily:"'Tajawal',sans-serif", fontSize:'15px', fontWeight:'800',
+              cursor:'pointer', boxShadow:'0 8px 28px rgba(8,145,178,0.45)',
+              transition:'transform 0.2s, box-shadow 0.2s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.transform='translateY(-2px)'; e.currentTarget.style.boxShadow='0 12px 36px rgba(8,145,178,0.6)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform='translateY(0)'; e.currentTarget.style.boxShadow='0 8px 28px rgba(8,145,178,0.45)'; }}
+          >
+            <i className="fas fa-arrow-right" style={{ marginLeft:'8px' }} />
+            حسناً، فهمت
+          </button>
+        </div>
+
+        <style>{`
+          @keyframes staffBlockPop {
+            from { opacity: 0; transform: scale(0.88) translateY(20px); }
+            to   { opacity: 1; transform: scale(1)    translateY(0);    }
+          }
+          @keyframes staffRingPulse {
+            0%, 100% { transform: scale(1);    opacity: 0.5; }
+            50%       { transform: scale(1.18); opacity: 1;   }
+          }
+        `}</style>
+      </div>
+    );
+  }
   if (successScreen) {
     return (
       <div style={{
@@ -381,6 +507,7 @@ export function ServiceRequestModal({
         {/* زر الإغلاق */}
         <button
           onClick={onClose}
+          title="إغلاق"
           style={{
             position: 'absolute', top: '18px', left: '18px',
             background: 'rgba(6,182,212,0.1)', border: 'none',
@@ -451,11 +578,12 @@ export function ServiceRequestModal({
             <div ref={dropdownRef} style={{ position: 'relative' }}>
               <button
                 type="button"
+                title="اختر الباقة"
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                 style={{
                   width: '100%', padding: '14px 18px',
                   background: selectedPackageInfo ? selectedPackageInfo.gradient : '#f8fafc',
-                  border: selectedPackageInfo ? 'none' : '2px dashed rgba(6,182,212,0.4)',
+                  border: selectedPackageInfo ? 'none' : packageError ? '2px dashed #ef4444' : '2px dashed rgba(6,182,212,0.4)',
                   borderRadius: '14px', cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   transition: 'all 0.3s ease',
@@ -497,7 +625,8 @@ export function ServiceRequestModal({
                     <button
                       key={pkg.name}
                       type="button"
-                      onClick={() => { setSelectedPackage(pkg.name); setIsDropdownOpen(false); }}
+                      title={pkg.name}
+                      onClick={() => { setSelectedPackage(pkg.name); setIsDropdownOpen(false); setPackageError(false); }}
                       style={{
                         width: '100%', padding: '16px 20px',
                         border: 'none',
@@ -530,6 +659,19 @@ export function ServiceRequestModal({
                 </div>
               )}
             </div>
+
+            {packageError && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '6px',
+                marginTop: '8px', color: '#ef4444',
+                fontSize: '13px', fontWeight: '700',
+                fontFamily: "'Tajawal', sans-serif",
+                animation: 'shakeX 0.4s ease',
+              }}>
+                <i className="fas fa-exclamation-circle"></i>
+                يرجى اختيار الباقة قبل تأكيد الطلب
+              </div>
+            )}
           </div>
         )}
 
@@ -575,6 +717,13 @@ export function ServiceRequestModal({
           @keyframes dropdownSlide {
             from { opacity: 0; transform: translateY(-10px); }
             to   { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes shakeX {
+            0%, 100% { transform: translateX(0); }
+            20%       { transform: translateX(-6px); }
+            40%       { transform: translateX(6px); }
+            60%       { transform: translateX(-4px); }
+            80%       { transform: translateX(4px); }
           }
         `}</style>
       </div>

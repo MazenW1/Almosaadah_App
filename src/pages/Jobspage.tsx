@@ -1292,7 +1292,7 @@ export default function JobsPage() {
         </button>
       )}
       {!authLoading && isStaff && (
-        <button className="jb-admin-fab" onClick={() => setShowAdminQueue(true)}>
+        <button className="jb-admin-fab" title="لوحة الأدمن" onClick={() => setShowAdminQueue(true)}>
           <i className="fas fa-shield-alt" />
         </button>
       )}
@@ -1636,6 +1636,7 @@ export default function JobsPage() {
                   <div className="jb-field">
                     <label className="jb-label">الجنس المطلوب</label>
                     <select
+                      aria-label="الجنس"
                       className="jb-select"
                       value={form.gender}
                       onChange={e => setForm(p => ({ ...p, gender: e.target.value as Gender }))}
@@ -1649,6 +1650,7 @@ export default function JobsPage() {
                     <label className="jb-label">سنوات الخبرة (الحد الأدنى)</label>
                     <input
                       type="number"
+                      aria-label="الحد الأدنى للخبرة"
                       className="jb-input"
                       min={0} max={30}
                       value={form.min_experience}
@@ -1660,6 +1662,7 @@ export default function JobsPage() {
                 <div className="jb-field">
                   <label className="jb-label">المستوى التعليمي</label>
                   <select
+                    aria-label="المستوى التعليمي"
                     className="jb-select"
                     value={form.education_level}
                     onChange={e => setForm(p => ({ ...p, education_level: e.target.value }))}
@@ -1676,6 +1679,7 @@ export default function JobsPage() {
                     <label className="jb-label">عدد الشواغر</label>
                     <input
                       type="number"
+                      aria-label="عدد الشواغر"
                       className="jb-input"
                       min={1} max={999}
                       value={form.vacancies}
@@ -1686,6 +1690,7 @@ export default function JobsPage() {
                     <label className="jb-label">آخر موعد للتقديم</label>
                     <input
                       type="date"
+                      aria-label="آخر موعد للتقديم"
                       className="jb-input"
                       value={form.deadline}
                       min={new Date().toISOString().split('T')[0]}
@@ -1712,6 +1717,7 @@ export default function JobsPage() {
                 <div className="jb-field">
                   <label className="jb-label">اختر طريقة التواصل مع المتقدمين *</label>
                   <select
+                    aria-label="طريقة التقديم"
                     className="jb-input"
                     value={form.apply_method}
                     onChange={e => setForm(p => ({ ...p, apply_method: e.target.value as ApplyMethod, apply_url: '', apply_phone: '' }))}

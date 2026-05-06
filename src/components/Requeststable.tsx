@@ -312,7 +312,7 @@ function ContractCell({ requestId, contractUrl, onRefresh, showToast, role = 'ad
 
   return (
     <div className="flex flex-col gap-1 min-w-[110px]">
-      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden"
+      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" aria-label="رفع ملف العقد" className="hidden"
         onChange={upload} onClick={(e) => { (e.target as HTMLInputElement).value = ''; }} />
       {contractUrl ? (
         <>
@@ -612,6 +612,16 @@ export default function RequestsTable({
     client:   ['#', 'رقم الطلب', 'نوع الخدمة', 'الموظف المسؤول', 'جوال الموظف', 'الحالة', 'العقد', 'التاريخ'],
   }[role];
 
+  // ── خريطة ألوان الباقات (تطابق ServiceRequestModal) ─────────────────────
+  const PKG_COLORS: Record<string, { pill: string; icon: string }> = {
+    'الماسية': { pill: dk ? 'bg-sky-900/50 text-sky-300 border-sky-500'      : 'bg-sky-50 text-sky-600 border-sky-300',      icon: 'fa-gem'   },
+    'الذهبية': { pill: dk ? 'bg-amber-900/50 text-amber-300 border-amber-500' : 'bg-amber-50 text-amber-600 border-amber-300', icon: 'fa-crown' },
+    'الفضية':  { pill: dk ? 'bg-slate-700/70 text-slate-300 border-slate-500' : 'bg-slate-100 text-slate-600 border-slate-300', icon: 'fa-medal' },
+    'مرنة':    { pill: dk ? 'bg-emerald-900/50 text-emerald-300 border-emerald-500' : 'bg-emerald-50 text-emerald-600 border-emerald-300', icon: 'fa-sync-alt' },
+  };
+  const getPkgStyle = (pkg: string) =>
+    PKG_COLORS[pkg] ?? { pill: dk ? 'bg-sky-900/50 text-sky-300 border-sky-500' : 'bg-sky-50 text-sky-600 border-sky-300', icon: 'fa-box' };
+
   return (
     <div className="space-y-4 font-tajawal" dir="rtl">
 
@@ -716,7 +726,7 @@ export default function RequestsTable({
 
             <div className="relative flex-1">
               <i className={`fas fa-search absolute right-3.5 top-1/2 -translate-y-1/2 text-xs ${muted}`} />
-              <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              <input type="text" aria-label="بحث في الطلبات" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                 placeholder={
                   searchField === 'association' ? 'ابحث باسم الجمعية...' :
                   searchField === 'phone'       ? 'ابحث برقم الجوال...' :
@@ -727,7 +737,7 @@ export default function RequestsTable({
                 className={`w-full pr-10 pl-10 py-2 rounded-xl border text-sm transition-all focus:outline-none focus:ring-2 ${inputC}`}
               />
               {searchQuery && (
-                <button onClick={() => setSearchQuery('')}
+                <button title="مسح البحث" onClick={() => setSearchQuery('')}
                   className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs hover:text-red-400 transition-colors ${muted}`}>
                   <i className="fas fa-times" />
                 </button>
@@ -869,8 +879,15 @@ export default function RequestsTable({
                         <div className={`text-sm font-bold ${text}`}>{r.user?.association_name || '—'}</div>
                         <div className={`text-[11px] ${muted}`}>{r.user?.user_email || ''}</div>
                       </td>
-                      <td className={`px-4 py-3 text-sm font-semibold ${text}`}>
-                        {adminService?.service_name || service?.service_name || (r.services as any)?.service_name || '—'}
+                      <td className="px-4 py-3">
+                        <div className={`text-sm font-semibold ${text}`}>
+                          {adminService?.service_name || service?.service_name || (r.services as any)?.service_name || '—'}
+                        </div>
+                        {(r as any).package_type && (() => { const p = getPkgStyle((r as any).package_type); return (
+                          <span className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${p.pill}`}>
+                            <i className={`fas ${p.icon} text-[9px]`} />{(r as any).package_type}
+                          </span>
+                        ); })()}
                       </td>
                       {/* الحالة مع dropdown للأدمن والموظف */}
                       <td className="px-4 py-3">
@@ -910,8 +927,15 @@ export default function RequestsTable({
                           </a>
                         ) : <span className={`text-xs ${muted}`}>—</span>}
                       </td>
-                      <td className={`px-4 py-3 text-sm font-semibold ${text}`}>
-                        {service?.service_name || (r.services as any)?.service_name || '—'}
+                      <td className="px-4 py-3">
+                        <div className={`text-sm font-semibold ${text}`}>
+                          {service?.service_name || (r.services as any)?.service_name || '—'}
+                        </div>
+                        {(r as any).package_type && (() => { const p = getPkgStyle((r as any).package_type); return (
+                          <span className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${p.pill}`}>
+                            <i className={`fas ${p.icon} text-[9px]`} />{(r as any).package_type}
+                          </span>
+                        ); })()}
                       </td>
                       {/* الحالة مع dropdown للموظف */}
                       <td className="px-4 py-3">
@@ -932,8 +956,15 @@ export default function RequestsTable({
 
                     {/* ─── Client Columns ─── */}
                     {role === 'client' && <>
-                      <td className={`px-4 py-3 text-sm font-semibold ${text}`}>
-                        {service?.service_name || '—'}
+                      <td className="px-4 py-3">
+                        <div className={`text-sm font-semibold ${text}`}>
+                          {service?.service_name || '—'}
+                        </div>
+                        {(r as any).package_type && (() => { const p = getPkgStyle((r as any).package_type); return (
+                          <span className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${p.pill}`}>
+                            <i className={`fas ${p.icon} text-[9px]`} />{(r as any).package_type}
+                          </span>
+                        ); })()}
                       </td>
                       <td className="px-4 py-3">
                         {employee?.employee_name ? (

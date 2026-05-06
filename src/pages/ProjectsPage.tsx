@@ -81,7 +81,7 @@ const SAUDI_CITIES = [
   'بريدة','خميس مشيط','الهفوف','المبرز','حائل','نجران','الجبيل','ينبع','القطيف','عرعر',
   'سكاكا','جازان','أبها','الباحة','بيشة','الدوادمي','الخرج','المجمعة','الزلفي','شقراء',
   'وادي الدواسر','رنية','تربة','القنفذة','الليث','رابغ','ضباء','العقيق','المخواة','سراة عبيدة',
-  'الحريق','الأفلاج','حوطة بني تميم','الدوادمي','القريات','عفيف','المذنب','الرس','الأسياح',
+  'الحريق','الأفلاج','حوطة بني تميم','القريات','عفيف','المذنب','الرس','الأسياح',
 ];
 
 const PROJECT_TYPES = [
@@ -185,7 +185,7 @@ export default function ProjectsPage() {
       setLoading(true);
       const { data, error } = await fetchProjects(selectedType);
       if (error) throw error;
-      setProjects(data || []);
+      setProjects((data as unknown as Project[]) || []);
     } catch (err) {
       showToast('حدث خطأ في تحميل المشاريع', 'error');
     } finally {
@@ -195,9 +195,6 @@ export default function ProjectsPage() {
  
 const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    
-    // DEBUG مؤقت
-    console.log('DEBUG SUBMIT:', { userId: user?.id, isAdmin, isEmployee, isClient, isStaff, profileLoading });
 
     // التحقق من البيانات والملف
     if (!user) { showToast('يرجى تسجيل الدخول أولاً', 'error'); return; }
@@ -1527,6 +1524,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
       {/* Admin Queue Button */}
       {isStaff && (
         <button
+          title="لوحة الأدمن"
           onClick={() => setShowAdminQueue(true)}
           style={{
             position: 'fixed', bottom: 32, left: 32, zIndex: 50,
@@ -1750,7 +1748,7 @@ const handleSubmit = async (e?: React.FormEvent) => {
               {/* File Upload */}
               <div className="form-group">
                 <label className="form-label">ملف المشروع <span style={{color:'#ef4444'}}>*</span></label>
-                <input ref={fileInputRef} type="file" onChange={(e) => setProjectFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
+                <input ref={fileInputRef} type="file" aria-label="رفع ملف المشروع" onChange={(e) => setProjectFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
  
                 {!projectFile ? (
                   <div className="upload-zone" onClick={() => fileInputRef.current?.click()}>

@@ -25,7 +25,7 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
-    "forceConsistentCasingInFileNames": true,
+    "forceConsistentCasingInFileNames": false,
     /* Linting */
     "strict": true,
     "noImplicitAny": false,

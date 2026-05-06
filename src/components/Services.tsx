@@ -136,7 +136,7 @@ export function Services({ onServiceSelect }: ServicesProps) {
         .services-section-v2 .section-header-v2{text-align:center;margin-bottom:64px}
         .section-header-v2 h2{font-family:'Tajawal',sans-serif;font-size:clamp(1.8rem,4vw,2.6rem);font-weight:900;background:linear-gradient(135deg,#0c4a6e,#0ea5e9);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:12px}
         .section-header-v2 p{font-family:'Tajawal',sans-serif;font-size:1.1rem;color:#64748b;font-weight:500}
-        .services-grid-v2{max-width:1300px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:24px}
+        .services-grid-v2{max-width:1300px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:24px;list-style:none;padding:0}
         @keyframes icon-pulse{0%,100%{box-shadow:0 0 0 0 rgba(14,165,233,.25)}50%{box-shadow:0 0 0 10px rgba(14,165,233,0)}}
         .service-card-v2{position:relative;background:rgba(255,255,255,.88);border:1px solid rgba(14,165,233,.12);border-radius:22px;padding:32px 28px 28px;cursor:pointer;overflow:hidden;backdrop-filter:blur(16px);transition:all .4s cubic-bezier(.34,1.56,.64,1);box-shadow:0 2px 16px rgba(14,165,233,.06);text-align:right}
         .service-card-v2::before{content:'';position:absolute;top:0;left:20%;right:20%;height:2px;background:linear-gradient(90deg,transparent,#0ea5e9,transparent);opacity:0;transition:opacity .3s,left .3s,right .3s}
@@ -173,14 +173,14 @@ export function Services({ onServiceSelect }: ServicesProps) {
           <p>نمنح كيانك الجاهزية.. ليحصد التمكين</p>
         </div>
 
-        <div className="services-grid-v2" role="list">
+        <ul className="services-grid-v2">
           {services.map((service, index) => (
-            <article
+            <li
               key={service.service_id}
               className="service-card-v2"
               onClick={() => onServiceSelect(service.service_name, 'service')}
               onKeyDown={e => { if (e.key==='Enter'||e.key===' '){e.preventDefault();onServiceSelect(service.service_name,'service')} }}
-              role="listitem" tabIndex={0}
+              tabIndex={0}
               aria-label={`طلب خدمة: ${service.service_name}`}
               data-aos="fade-up" data-aos-delay={Math.min(index*70,350)}
             >
@@ -213,21 +213,21 @@ export function Services({ onServiceSelect }: ServicesProps) {
               <div className="sv2-cta">
                 <i className="fas fa-arrow-left" /> اطلب الخدمة الآن
               </div>
-            </article>
+            </li>
           ))}
 
           {isAdminOrEmployee && (
-            <div
+            <li
               className="sv2-add-card"
               onClick={() => setShowModal(true)}
               onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setShowModal(true)}}}
-              role="button" tabIndex={0} aria-label="إضافة خدمة جديدة" data-aos="fade-up"
+              tabIndex={0} aria-label="إضافة خدمة جديدة" data-aos="fade-up"
             >
               <div className="sv2-add-icon"><i className="fas fa-plus" /></div>
               <span className="sv2-add-label">إضافة خدمة جديدة</span>
-            </div>
+            </li>
           )}
-        </div>
+        </ul>
       </section>
 
       {/* مودال الإضافة */}

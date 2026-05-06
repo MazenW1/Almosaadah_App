@@ -107,7 +107,7 @@ function EmojiPicker({ value, onChange }: { value: string; onChange: (v: string)
   return (
     <div style={{ position: 'relative' }}>
       <div style={{ display: 'flex', gap: '8px' }}>
-        <input value={value} onChange={e => onChange(e.target.value)}
+        <input aria-label="الإيموجي المختار" value={value} onChange={e => onChange(e.target.value)}
           style={{ ...inp, flex: 1 }} maxLength={8} placeholder="اكتب أو اختر..." />
         <button type="button" onClick={() => setOpen(o => !o)}
           style={{
@@ -127,7 +127,7 @@ function EmojiPicker({ value, onChange }: { value: string; onChange: (v: string)
           boxShadow: '0 16px 48px rgba(0,0,0,.14)',
           maxHeight: '300px', overflowY: 'auto',
         }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="بحث..."
+          <input aria-label="بحث في الإيموجي" value={search} onChange={e => setSearch(e.target.value)} placeholder="بحث..."
             style={{
               width: '100%', padding: '8px 12px', borderRadius: '8px',
               border: '1.5px solid #e2e8f0', marginBottom: '10px',
@@ -226,6 +226,7 @@ function IconPicker({
           maxHeight:'320px', overflowY:'auto',
         }}>
           <input
+            aria-label="بحث في الأيقونات"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="بحث..."
@@ -308,9 +309,9 @@ function IconBtn({ ic, selected, accent, onSelect }: {
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <div>
-      <label style={{ display:'block', fontWeight:700, fontSize:'.82rem', color:'#475569', marginBottom:'5px', fontFamily:'Tajawal,sans-serif' }}>
+      <span style={{ display:'block', fontWeight:700, fontSize:'.82rem', color:'#475569', marginBottom:'5px', fontFamily:'Tajawal,sans-serif' }}>
         {label}
-      </label>
+      </span>
       {children}
       {hint && <p style={{ margin:'4px 0 0', fontSize:'.75rem', color:'#94a3b8', fontFamily:'Tajawal,sans-serif' }}>{hint}</p>}
     </div>
@@ -338,16 +339,16 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
   // ── حقول أساسية
   const [serviceId,   setServiceId]   = useState(initialData?.service_id ?? '');
   const [name,        setName]        = useState(initialData?.service_name ?? '');
-  const [category,    setCategory]    = useState<'خدمة'|'منتج'>(initialData?.category ?? defaultCategory);
+  const [category,    setCategory]    = useState<'خدمة'|'منتج'>((initialData?.category as 'خدمة'|'منتج') ?? defaultCategory);
   const [description, setDescription] = useState(initialData?.service_description ?? '');
-  const [icon,        setIcon]        = useState(initialData?.icon ?? 'fa-star');
-  const [emoji,       setEmoji]       = useState(initialData?.emoji ?? '');
+  const [icon,        setIcon]        = useState<string>(initialData?.icon ?? 'fa-star');
+  const [emoji,       setEmoji]       = useState<string>(initialData?.emoji ?? '');
   const [highlight,   setHighlight]   = useState(initialData?.highlight ?? false);
   const [sortOrder,   setSortOrder]   = useState(initialData?.sort_order ?? 0);
 
   // ── Badge
-  const [badge,     setBadge]     = useState(initialData?.badge ?? '');
-  const [badgeIcon, setBadgeIcon] = useState(initialData?.badge_icon ?? '');
+  const [badge,     setBadge]     = useState(initialData?.badge ?? '' as string);
+  const [badgeIcon, setBadgeIcon] = useState(initialData?.badge_icon ?? '' as string);
 
   // ── أقسام مرنة — كل قسم له _sid ثابت لتجنب خلط المؤشرات في React
   const [sections, setSections] = useState<SectionWithId[]>(() => initSections(initialData));
@@ -402,24 +403,46 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
     setSaving(true); setError('');
     try {
       const cleanSections = stripSid(sections.filter(s => s.label.trim() && (s.value.trim() || (Array.isArray(s.items) && s.items.length > 0))));
-      const payload = {
-        service_id: serviceId.trim().toUpperCase(),
-        service_name: name.trim(),
-        service_description: description.trim(),
-        category,
-        icon: category === 'خدمة' ? icon : undefined,
-        emoji: category === 'منتج' ? emoji : undefined,
-        badge: badge.trim() || null,
-        badge_icon: badge.trim() ? (badgeIcon || null) : null,
-        highlight,
-        sort_order: sortOrder,
-        sections: cleanSections.length ? cleanSections : undefined,
-        is_active: true,
-      };
 
       if (isEditMode) {
-        await updateService(serviceId.trim().toUpperCase(), payload);
+        // ✅ الإصلاح: نستخدم service_id الأصلي من قاعدة البيانات مباشرة
+        // بدلاً من serviceId.trim().toUpperCase() الذي قد يُنتج قيمة مختلفة
+        const originalId = initialData!.service_id;
+
+        const editPayload: Record<string, any> = {
+          service_name:        name.trim(),
+          service_description: description.trim(),
+          category,
+          icon:       category === 'خدمة' ? icon  : undefined,
+          emoji:      category === 'منتج' ? emoji : undefined,
+          badge:      badge.trim() || undefined,
+          badge_icon: badge.trim() ? (badgeIcon || undefined) : undefined,
+          highlight,
+          sort_order: sortOrder,
+        };
+
+        // الأقسام فقط للمنتجات
+        if (category === 'منتج') {
+          editPayload.sections = cleanSections.length ? cleanSections : undefined;
+        }
+
+        await updateService(originalId, editPayload);
       } else {
+        const sid = serviceId.trim().toUpperCase();
+        const payload = {
+          service_id:          sid,
+          service_name:        name.trim(),
+          service_description: description.trim(),
+          category,
+          icon:       category === 'خدمة' ? icon  : undefined,
+          emoji:      category === 'منتج' ? emoji : undefined,
+          badge:      badge.trim() || undefined,
+          badge_icon: badge.trim() ? (badgeIcon || undefined) : undefined,
+          highlight,
+          sort_order: sortOrder,
+          sections:   cleanSections.length ? cleanSections : undefined,
+          is_active:  true,
+        };
         await createService(payload);
       }
 
@@ -455,7 +478,7 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
             />
             {isEditMode ? `تعديل ${category}` : `إضافة ${category} جديد`}
           </h2>
-          <button onClick={onClose}
+          <button onClick={onClose} title="إغلاق"
             style={{ background:'none', border:'none', fontSize:'1.4rem', cursor:'pointer', color:'#94a3b8' }}>
             <i className="fas fa-times" />
           </button>
@@ -502,6 +525,7 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
             </Field>
             <Field label="النوع">
               <select
+                aria-label="نوع الخدمة أو المنتج"
                 value={category}
                 onChange={e=>setCategory(e.target.value as 'خدمة'|'منتج')}
                 style={{ ...inp, cursor:'pointer' }}
@@ -530,7 +554,7 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
                 </Field>
             }
             <Field label="ترتيب الظهور">
-              <input type="number" value={sortOrder} onChange={e=>setSortOrder(+e.target.value)}
+              <input type="number" aria-label="ترتيب الظهور" value={sortOrder} onChange={e=>setSortOrder(+e.target.value)}
                 style={inp} min={0} />
             </Field>
           </div>
@@ -614,6 +638,7 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
                   {sections.length > 1 && (
                     <button
                       type="button"
+                      title="حذف القسم"
                       onClick={e => { e.stopPropagation(); removeSection(sec._sid); }}
                       style={{ background:'#fee2e2', border:'none', borderRadius:'6px', padding:'4px 10px', cursor:'pointer', color:'#dc2626', fontSize:'.8rem' }}
                     >
@@ -639,9 +664,9 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
                   </Field>
                   <Field label="اللون">
                     <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
-                      <input type="color" value={sec.color||'#0891b2'} onChange={e=>updateSection(sec._sid,'color',e.target.value)}
+                      <input type="color" aria-label="لون القسم" value={sec.color||'#0891b2'} onChange={e=>updateSection(sec._sid,'color',e.target.value)}
                         style={{ width:'100%', height:'42px', borderRadius:'8px', border:'1.5px solid #e2e8f0', cursor:'pointer', padding:'2px' }} />
-                      <input value={sec.color||''} onChange={e=>updateSection(sec._sid,'color',e.target.value)}
+                      <input aria-label="قيمة لون القسم" value={sec.color||''} onChange={e=>updateSection(sec._sid,'color',e.target.value)}
                         style={{ ...inp, fontSize:'.78rem' }} maxLength={20} />
                     </div>
                   </Field>
@@ -671,6 +696,7 @@ export function AddServiceModal({ defaultCategory, onClose, onSaved, initialData
                         placeholder={`البند ${ii+1}`} style={{ ...inp, flex:1, fontSize:'.85rem' }} />
                       <button
                         type="button"
+                        title="حذف البند"
                         onClick={e => { e.stopPropagation(); removeItem(sec._sid, ii); }}
                         style={{ background:'#fee2e2', border:'none', borderRadius:'6px', padding:'8px 10px', cursor:'pointer', color:'#dc2626' }}
                       >

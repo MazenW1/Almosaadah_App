@@ -75,6 +75,8 @@ export default function ReviewsPage() {
   const [isBlocked, setIsBlocked] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showAdminQueue, setShowAdminQueue] = useState(false);
+  const [showSuccessScreen, setShowSuccessScreen] = useState(false);
+  const [myReviewsCount, setMyReviewsCount] = useState(0);
 
   useEffect(() => {
     const anyOpen = showForm || showAdminQueue;
@@ -115,15 +117,27 @@ export default function ReviewsPage() {
 
   useEffect(() => {
     loadReviews();
-    if (user && !isStaff) checkIfBlocked();
+    if (user && !isStaff) {
+      checkIfBlocked();
+      loadMyReviewsCount();
+    }
   }, [user, isStaff]);
+
+  const loadMyReviewsCount = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('reviews')
+      .select('id')
+      .eq('user_id', user.id);
+    setMyReviewsCount(data?.length ?? 0);
+  };
 
   const loadReviews = async () => {
     try {
       setLoading(true);
       const { data, error } = await fetchReviews();
       if (error) throw error;
-      setReviews(data || []);
+      setReviews((data as unknown as Review[]) || []);
     } catch (err) {
       showToast('حدث خطأ في تحميل الآراء', 'error');
     } finally {
@@ -163,10 +177,6 @@ export default function ReviewsPage() {
       return; 
     }
 
-    if (!submitRateLimiter.canProceed()) {
-      showToast('يرجى الانتظار قبل إرسال تقييم آخر', 'error'); return;
-    }
-
     // ── تنظيف النص
     const cleanText = sanitizeInput(reviewText.trim());
     if (cleanText.length > 0 && cleanText.length < 5) { showToast('التقييم قصير جداً', 'error'); return; }
@@ -174,14 +184,19 @@ export default function ReviewsPage() {
     setIsSubmitting(true);
 
     try {
-      // ── منع التكرار: تحقق من وجود تقييم سابق غير ملغى
-      const { data: existingReview } = await supabase
+      // ── منع التكرار: تحقق من عدد التقييمات السابقة (الحد الأقصى 5)
+      const { data: existingReviews } = await supabase
         .from('reviews')
         .select('id')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (existingReview) {
-        showToast('⚠️ لديك تقييم مسبق — يمكنك تعديله أو حذفه أولاً', 'error');
+        .eq('user_id', user.id);
+      if (existingReviews && existingReviews.length >= 5) {
+        showToast('⚠️ وصلت للحد الأقصى (5 آراء) — احذف رأياً سابقاً لإضافة رأي جديد', 'error');
+        setIsSubmitting(false); return;
+      }
+
+      // ── rate limit: يُحتسب فقط للمحاولات الحقيقية بعد التأكد من عدم التكرار
+      if (!submitRateLimiter.canProceed()) {
+        showToast('يرجى الانتظار قبل إرسال تقييم آخر', 'error');
         setIsSubmitting(false); return;
       }
        let associationName = currentUserAssociation;
@@ -229,15 +244,16 @@ export default function ReviewsPage() {
         rating,
       });
 
-      // 6. نجاح العملية
-      showToast('تم إرسال رأيك بنجاح وهو قيد المراجعة! 🎉', 'success');
-      
+      // 6. نجاح العملية — نعرض شاشة النجاح بدل التوست
       setRating(0);
       setReviewText('');
       setShowForm(false);
+      setShowSuccessScreen(true);
+      setTimeout(() => setShowSuccessScreen(false), 4000);
       
       // تحديث القائمة
       loadReviews();
+      loadMyReviewsCount();
 
     } catch (err: any) {
       console.error("Submission Error:", err);
@@ -254,6 +270,7 @@ export default function ReviewsPage() {
       if (error) throw error;
       showToast('تم الحذف بنجاح', 'success');
       loadReviews();
+      loadMyReviewsCount();
     } catch (err) {
       showToast('حدث خطأ في الحذف', 'error');
     }
@@ -879,10 +896,10 @@ export default function ReviewsPage() {
                 </div>
                 <div>
                   <p className="card-name">
-                    {review.user?.association_name || review.user_name ||
-                      (user?.id === review.user_id && currentUserAssociation
-                        ? currentUserAssociation
-                        : 'عميل كريم')}
+                    {review.user?.association_name ||
+                      review.user_name ||
+                      (user?.id === review.user_id ? currentUserAssociation : '') ||
+                      'عميل كريم'}
                   </p>
                   <p className="card-date">{new Date(review.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
                 </div>
@@ -948,6 +965,7 @@ export default function ReviewsPage() {
       {/* Admin Queue Button */}
       {isStaff && (
         <button
+          title="لوحة الأدمن"
           onClick={() => setShowAdminQueue(true)}
           style={{
             position: 'fixed', bottom: 32, left: 32, zIndex: 50,
@@ -970,7 +988,7 @@ export default function ReviewsPage() {
       )}
 
       {/* FAB - Add Review */}
-      {user && !isStaff && !isBlocked && (
+      {user && !isStaff && !isBlocked && myReviewsCount < 5 && (
         <button className="fab" onClick={() => setShowForm(true)}>
           <i className="fas fa-feather" />
           <span className="fab-tooltip">أضف رأيك</span>
@@ -983,6 +1001,7 @@ export default function ReviewsPage() {
           <div className="form-backdrop" onClick={() => setShowForm(false)} />
           <div className="form-modal">
             <button
+              title="إغلاق"
               onClick={() => setShowForm(false)}
               style={{
                 position: 'absolute', top: 16, left: 16,
@@ -1047,6 +1066,126 @@ export default function ReviewsPage() {
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── شاشة النجاح بعد إرسال الرأي ── */}
+      {showSuccessScreen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px',
+          background: 'rgba(8,28,50,0.82)',
+          backdropFilter: 'blur(18px)',
+          WebkitBackdropFilter: 'blur(18px)',
+        }}>
+          {/* بطاقة النجاح */}
+          <div style={{
+            position: 'relative', overflow: 'hidden',
+            width: '90%', maxWidth: '440px',
+            background: dm
+              ? 'linear-gradient(155deg, #0c1e35 0%, #0a2240 60%, #081828 100%)'
+              : 'linear-gradient(155deg, #f0f9ff 0%, #e0f2fe 60%, #bae6fd 100%)',
+            border: `1.5px solid ${dm ? 'rgba(14,165,233,0.35)' : 'rgba(14,165,233,0.45)'}`,
+            borderRadius: '28px',
+            padding: '44px 36px 36px',
+            textAlign: 'center',
+            boxShadow: '0 32px 80px rgba(8,145,178,0.28), 0 0 0 1px rgba(14,165,233,0.1)',
+            animation: 'rvSuccessPop 0.5s cubic-bezier(.34,1.56,.64,1) both',
+            direction: 'rtl', fontFamily: "'Tajawal', sans-serif",
+          }}>
+
+            {/* حلقات ديكور */}
+            <div style={{ position:'absolute', top:'-60px', right:'-60px', width:'200px', height:'200px', borderRadius:'50%', background:'rgba(14,165,233,0.07)', pointerEvents:'none' }} />
+            <div style={{ position:'absolute', bottom:'-40px', left:'-40px', width:'150px', height:'150px', borderRadius:'50%', background:'rgba(14,165,233,0.05)', pointerEvents:'none' }} />
+
+            {/* أيقونة النجمة + checkmark */}
+            <div style={{ position:'relative', margin:'0 auto 24px', width:'88px', height:'88px' }}>
+              {/* حلقة نابضة */}
+              <div style={{
+                position:'absolute', inset:'-8px', borderRadius:'50%',
+                border:'2px solid rgba(14,165,233,0.4)',
+                animation:'rvRingPulse 1.6s ease-out 0.3s infinite',
+              }} />
+              <div style={{
+                width:'88px', height:'88px', borderRadius:'50%',
+                background:'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                boxShadow:'0 12px 36px rgba(14,165,233,0.5)',
+                animation:'rvIconPop 0.5s 0.25s cubic-bezier(.34,1.56,.64,1) both',
+              }}>
+                <i className="fas fa-feather-alt" style={{ color:'#fff', fontSize:'32px' }} />
+              </div>
+            </div>
+
+            {/* العنوان */}
+            <h2 style={{
+              margin:'0 0 10px', fontSize:'22px', fontWeight:'900',
+              color: dm ? '#e0f2fe' : '#0c4a6e',
+              letterSpacing:'-0.3px',
+            }}>
+              وصل رأيك! شكراً لك 🌟
+            </h2>
+
+            {/* الوصف */}
+            <p style={{
+              margin:'0 0 26px', fontSize:'14px', fontWeight:'600', lineHeight:'1.8',
+              color: dm ? '#7dd3fc' : '#0369a1',
+            }}>
+              رأيك وصل للفريق وسيتم مراجعته<br />ونشره في أقرب وقت.
+            </p>
+
+            {/* بادجات الحالة */}
+            <div style={{ display:'flex', gap:'8px', justifyContent:'center', flexWrap:'wrap', marginBottom:'28px' }}>
+              {[
+                { icon:'fa-clock', text:'قيد المراجعة' },
+                { icon:'fa-bullhorn', text:'سيُنشر قريباً' },
+              ].map((b, i) => (
+                <div key={i} style={{
+                  display:'flex', alignItems:'center', gap:'7px',
+                  padding:'7px 16px', borderRadius:'50px',
+                  background: dm ? 'rgba(14,165,233,0.12)' : 'rgba(14,165,233,0.1)',
+                  border:`1.5px solid ${dm ? 'rgba(14,165,233,0.3)' : 'rgba(14,165,233,0.35)'}`,
+                  fontSize:'12px', fontWeight:'800',
+                  color: dm ? '#7dd3fc' : '#0369a1',
+                }}>
+                  <i className={`fas ${b.icon}`} style={{ fontSize:'11px' }} />
+                  {b.text}
+                </div>
+              ))}
+            </div>
+
+            {/* شريط التقدم */}
+            <div style={{ height:'4px', borderRadius:'99px', overflow:'hidden', background: dm ? 'rgba(14,165,233,0.15)' : 'rgba(14,165,233,0.18)' }}>
+              <div style={{
+                height:'100%', borderRadius:'99px',
+                background:'linear-gradient(90deg, #0ea5e9, #38bdf8)',
+                animation:'rvProgress 4s linear forwards',
+              }} />
+            </div>
+            <p style={{ margin:'8px 0 0', fontSize:'11px', fontWeight:'600', color: dm ? 'rgba(125,211,252,0.55)' : 'rgba(3,105,161,0.55)' }}>
+              سيتم الإغلاق تلقائياً...
+            </p>
+
+            <style>{`
+              @keyframes rvSuccessPop {
+                from { opacity:0; transform:scale(0.82) translateY(24px); }
+                to   { opacity:1; transform:scale(1) translateY(0); }
+              }
+              @keyframes rvIconPop {
+                from { opacity:0; transform:scale(0.3) rotate(-20deg); }
+                to   { opacity:1; transform:scale(1) rotate(0deg); }
+              }
+              @keyframes rvRingPulse {
+                0%   { transform:scale(1); opacity:0.7; }
+                100% { transform:scale(1.7); opacity:0; }
+              }
+              @keyframes rvProgress {
+                from { width:0%; }
+                to   { width:100%; }
+              }
+            `}</style>
           </div>
         </div>
       )}

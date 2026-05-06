@@ -849,14 +849,14 @@ function ContractFileCell({ contractUrl, contractId, onUploaded, showToast }: { 
 
   return (
     <div className="flex flex-col items-start gap-1.5">
-      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={handleUpload} />
+      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" aria-label="رفع ملف العقد" className="hidden" onChange={handleUpload} />
       {contractUrl ? (
         <div className="flex gap-1 w-full">
           <button onClick={() => handleView(contractUrl)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all border border-emerald-200">
             <i className="fas fa-eye" /> عرض
           </button>
-          <button onClick={() => fileRef.current?.click()} disabled={uploading}
+          <button onClick={() => fileRef.current?.click()} disabled={uploading} title="رفع عقد جديد"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-50 text-slate-500 hover:bg-slate-200 transition-all border border-slate-200">
             <i className="fas fa-arrow-up-from-bracket text-[10px]" />
           </button>
@@ -910,7 +910,7 @@ function Modal({ isOpen, onClose, title, children, size = 'md', isDarkMode = fal
         <div className={`sticky top-0 rounded-t-2xl border-b px-6 py-4 flex items-center justify-between z-10
           ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
           <h3 className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{title}</h3>
-          <button onClick={onClose} className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors
+          <button onClick={onClose} title="إغلاق" className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors
             ${isDarkMode ? 'hover:bg-slate-700 text-slate-400 hover:text-white' : 'hover:bg-slate-100 text-slate-400'}`}>
             <i className="fas fa-xmark" />
           </button>
@@ -925,14 +925,15 @@ function Modal({ isOpen, onClose, title, children, size = 'md', isDarkMode = fal
 function FormInput({ label, value, onChange, placeholder, type = 'text', required, icon, prefix, isDarkMode = false }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; required?: boolean; icon?: string; prefix?: string; isDarkMode?: boolean }) {
   return (
     <div className="mb-4">
-      <label className={`block text-sm font-bold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+      <span className={`block text-sm font-bold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
         {icon && <i className={`fas ${icon} ml-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`} />}
         {label}
         {required && <span className="text-red-500 mr-1">*</span>}
-      </label>
+      </span>
       <div className="relative">
         {prefix && <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-400'}`}>{prefix}</span>}
         <input
+          aria-label={label}
           type={type}
           value={value}
           onChange={e => onChange(e.target.value)}
@@ -960,6 +961,7 @@ function FormSelect({ label, value, onChange, options, required, icon, placehold
         {required && <span className="text-red-500 mr-1">*</span>}
       </label>
       <select
+        aria-label={label}
         value={value}
         onChange={e => onChange(e.target.value)}
         required={required}
@@ -1288,6 +1290,7 @@ export default function Contracts() {
       financial_notes: '',
       start_date: new Date().toISOString().split('T')[0],
       end_date: '',
+      client_rep: '',
       contract_status: 'draft',
       client_logo_url: '',
       awn_package: '',
@@ -1603,6 +1606,7 @@ export default function Contracts() {
                 <i className="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm" />
                 <input
                   type="text"
+                  aria-label="بحث في العقود"
                   value={searchQuery}
                   onChange={e => handleSearch(e.target.value)}
                   placeholder="ابحث باسم العميل أو الموظف أو الخدمة..."
@@ -1621,7 +1625,7 @@ export default function Contracts() {
             <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border ${dm ? 'bg-cyan-900/30 text-cyan-300 border-cyan-700' : 'bg-cyan-50 text-cyan-700 border-cyan-200'}`}>
               <i className="fas fa-filter text-[10px]" />
               فلتر نشط: {CONTRACT_STATUS_MAP[statusFilter]?.text || statusFilter}
-              <button onClick={() => setStatusFilter(null)} className="hover:text-red-500 transition-colors mr-1">
+              <button onClick={() => setStatusFilter(null)} title="إزالة الفلتر" className="hover:text-red-500 transition-colors mr-1">
                 <i className="fas fa-xmark text-[11px]" />
               </button>
             </span>
@@ -1926,6 +1930,7 @@ export default function Contracts() {
                 </label>
                 <input
                   type="text"
+                  aria-label="ممثل الجمعية"
                   value={formData.client_rep}
                   readOnly={!isAdmin}
                   onChange={e => isAdmin && setFormData(f => ({ ...f, client_rep: e.target.value }))}
@@ -1947,6 +1952,7 @@ export default function Contracts() {
                 <div className="relative">
                   <input
                     type="tel"
+                    aria-label="رقم الهاتف"
                     inputMode="numeric"
                     value={formData.client_phone}
                     maxLength={10}
@@ -1993,7 +1999,7 @@ export default function Contracts() {
                   <i className={`fas fa-user-tie ml-1 ${dm ? 'text-slate-400' : 'text-slate-400'}`} />
                   الموظف المتابع <span className="text-red-500 mr-1">*</span>
                 </label>
-                <select value={formData.employee_id}
+                <select aria-label="الموظف المتابع" value={formData.employee_id}
                   onChange={e => setFormData(f => ({ ...f, employee_id: e.target.value }))}
                   className={`w-full px-4 py-2.5 rounded-xl border focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200 outline-none text-sm
                     ${dm ? 'bg-slate-700 border-slate-500 text-white focus:ring-cyan-900' : 'bg-white border-slate-200'}`}
@@ -2017,7 +2023,7 @@ export default function Contracts() {
                   الخدمة
                 </label>
                 <div className="relative">
-                  <select value={formData.service_name}
+                  <select aria-label="الخدمة" value={formData.service_name}
                     onChange={e => setFormData(f => ({ ...f, service_name: e.target.value, awn_package: '' }))}
                     className={`w-full px-4 py-2.5 rounded-xl border focus:border-cyan-500 focus:ring-2 outline-none text-sm appearance-none pr-10
                       ${dm ? 'bg-slate-700 border-slate-500 text-white focus:ring-cyan-900' : 'bg-white border-slate-200 focus:ring-cyan-200'}`}
@@ -2208,7 +2214,7 @@ export default function Contracts() {
                     <div className="relative flex-shrink-0">
                       <img src={formData.client_logo_url} alt="شعار الجمعية"
                         className="w-14 h-14 rounded-xl object-contain border border-slate-200 bg-white p-1 shadow-sm" />
-                      <button onClick={() => setFormData(f => ({ ...f, client_logo_url: '' }))}
+                      <button onClick={() => setFormData(f => ({ ...f, client_logo_url: '' }))} title="حذف الشعار"
                         className="absolute -top-1.5 -left-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[9px] flex items-center justify-center hover:bg-red-600 shadow">
                         <i className="fas fa-times" />
                       </button>
@@ -2226,7 +2232,7 @@ export default function Contracts() {
                         ? <><i className="fas fa-spinner fa-spin" /> جاري الرفع...</>
                         : <><i className="fas fa-cloud-upload-alt" /> {formData.client_logo_url ? 'تغيير الشعار' : 'رفع شعار الجمعية'}</>
                       }
-                      <input type="file" accept="image/*" className="hidden" disabled={logoUploading}
+                      <input type="file" accept="image/*" aria-label="رفع شعار الجمعية" className="hidden" disabled={logoUploading}
                         onChange={e => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); e.target.value = ''; }} />
                     </label>
                     <p className="text-[11px] text-slate-400 mt-1">PNG أو JPG • حد أقصى 2MB • يُرفع في Storage تلقائياً</p>
@@ -2316,12 +2322,13 @@ export default function Contracts() {
                         <i className="fas fa-grip-vertical" />
                       </span>
                     )}
-                    <input type="checkbox" checked={clause.enabled}
+                    <input type="checkbox" aria-label={`تفعيل البند: ${clause.title || ''}`} checked={clause.enabled}
                       onChange={e => isAdmin && setClauses(prev => prev.map(c => c.id === clause.id ? { ...c, enabled: e.target.checked } : c))}
                       className="w-4 h-4 accent-red-600 flex-shrink-0"
                       style={{ cursor: isAdmin ? 'pointer' : 'not-allowed' }}
                       disabled={!isAdmin} />
                     <input
+                      aria-label="عنوان البند"
                       value={clause.title}
                       onChange={e => isAdmin && setClauses(prev => prev.map(c => c.id === clause.id ? { ...c, title: e.target.value } : c))}
                       className={`flex-1 text-sm font-bold bg-transparent outline-none border-b border-transparent pb-0.5 transition-colors
@@ -2349,7 +2356,7 @@ export default function Contracts() {
                             const [rev, fee] = line.split('|');
                             return (
                               <div key={li} className="grid grid-cols-2 gap-2">
-                                <input value={rev || ''} dir="rtl"
+                                <input aria-label="قيمة الشريحة" value={rev || ''} dir="rtl"
                                   readOnly={!isAdmin}
                                   onChange={e => {
                                     if (!isAdmin) return;
@@ -2364,7 +2371,7 @@ export default function Contracts() {
                                       ? dm ? 'bg-emerald-950/30 border-emerald-700 text-emerald-200 focus:border-emerald-500 placeholder-emerald-700' : 'bg-emerald-50 border-emerald-200 focus:border-emerald-500 text-slate-700'
                                       : dm ? 'bg-slate-700 border-slate-600 text-slate-400 cursor-default' : 'bg-slate-50 border-slate-200 text-slate-500 cursor-default'}`}
                                   placeholder="الإيراد" />
-                                <input value={fee || ''} dir="rtl"
+                                <input aria-label="نسبة الرسوم" value={fee || ''} dir="rtl"
                                   readOnly={!isAdmin}
                                   onChange={e => {
                                     if (!isAdmin) return;
@@ -2390,7 +2397,7 @@ export default function Contracts() {
                           )}
                         </div>
                       ) : (
-                        <textarea value={clause.text.replace(/\\n/g, '\n')}
+                        <textarea aria-label="نص البند" value={clause.text.replace(/\\n/g, '\n')}
                           onChange={e => isAdmin && setClauses(prev => prev.map(c => c.id === clause.id ? { ...c, text: e.target.value.replace(/\n/g, '\\n') } : c))}
                           rows={Math.max(3, clause.text.split('\n').length + 1)}
                           dir="rtl"

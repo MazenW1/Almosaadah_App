@@ -31,8 +31,8 @@ export function Header({
 
   // ✅ استخدام useRef للـ observers عشان نقدر ننظفهم
   const observerRef = useRef<IntersectionObserver | null>(null);
-  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const timeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [manualIsAdmin, setManualIsAdmin] = useState(false);
   const [manualIsEmployee, setManualIsEmployee] = useState(false);
@@ -1357,7 +1357,7 @@ export function Header({
           <nav className="mobile-drawer">
             <div className="mobile-drawer-top">
               <span className="mobile-drawer-title">القائمة الرئيسية</span>
-              <button className="mobile-close-btn" onClick={() => setIsMobileMenuOpen(false)}>
+              <button className="mobile-close-btn" title="إغلاق القائمة" onClick={() => setIsMobileMenuOpen(false)}>
                 <i className="fas fa-times" />
               </button>
             </div>

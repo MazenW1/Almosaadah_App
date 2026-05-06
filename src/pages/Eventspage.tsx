@@ -1165,8 +1165,6 @@ export default function EventsPage() {
                 className="ev-card"
                 style={{ animationDelay: `${i * 0.06}s` }}
                 onClick={() => setSelectedEvent(ev)}
-                role="button"
-                tabIndex={0}
                 onKeyDown={e => e.key === 'Enter' && setSelectedEvent(ev)}
                 aria-label={`عرض تفاصيل ${ev.event_name}`}
               >
@@ -1374,7 +1372,7 @@ export default function EventsPage() {
         </button>
       )}
       {!authLoading && isStaff && (
-        <button className="ev-admin-fab" onClick={() => setShowAdminQueue(true)}>
+        <button className="ev-admin-fab" title="لوحة الأدمن" onClick={() => setShowAdminQueue(true)}>
           <i className="fas fa-shield-alt" />
         </button>
       )}
@@ -1584,7 +1582,7 @@ export default function EventsPage() {
             <div className="ev-modal-header">
               <h2 className="ev-modal-title">إضافة فعالية جديدة</h2>
               <p className="ev-modal-sub">ستُراجع الفعالية من قِبل الإدارة قبل النشر</p>
-              <button className="ev-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+              <button className="ev-modal-close" title="إغلاق" onClick={() => { setShowForm(false); resetForm(); }}>
                 <i className="fas fa-times" />
               </button>
             </div>
@@ -1631,6 +1629,7 @@ export default function EventsPage() {
                   <div className="ev-field">
                     <label className="ev-label">نوع الفعالية</label>
                     <select
+                      aria-label="نوع الفعالية"
                       className="ev-select"
                       value={form.event_type}
                       onChange={e => setForm({ ...form, event_type: e.target.value as Event['event_type'] })}
@@ -1724,6 +1723,7 @@ export default function EventsPage() {
                     <label className="ev-label">تاريخ الفعالية <span className="ev-required">*</span></label>
                     <input
                       type="date"
+                      aria-label="تاريخ الفعالية"
                       className="ev-input"
                       value={form.event_date}
                       min={new Date().toISOString().split('T')[0]}
@@ -1734,6 +1734,7 @@ export default function EventsPage() {
                     <label className="ev-label">وقت البدء</label>
                     <input
                       type="time"
+                      aria-label="وقت البداية"
                       className="ev-input"
                       value={form.start_time}
                       onChange={e => setForm({ ...form, start_time: e.target.value })}
@@ -1743,6 +1744,7 @@ export default function EventsPage() {
                     <label className="ev-label">وقت الانتهاء</label>
                     <input
                       type="time"
+                      aria-label="وقت النهاية"
                       className="ev-input"
                       value={form.end_time}
                       onChange={e => setForm({ ...form, end_time: e.target.value })}
@@ -1754,6 +1756,7 @@ export default function EventsPage() {
                   <label className="ev-label">آخر موعد للتسجيل</label>
                   <input
                     type="date"
+                    aria-label="آخر موعد للتسجيل"
                     className="ev-input"
                     value={form.registration_deadline}
                     min={new Date().toISOString().split('T')[0]}
@@ -1772,6 +1775,7 @@ export default function EventsPage() {
                     <label className="ev-label">عدد المتطوعين المطلوبين</label>
                     <input
                       type="number"
+                      aria-label="الطاقة الاستيعابية"
                       className="ev-input"
                       min={1}
                       max={10000}
@@ -1782,6 +1786,7 @@ export default function EventsPage() {
                   <div className="ev-field">
                     <label className="ev-label">الفئة المستهدفة</label>
                     <select
+                      aria-label="الفئة المستهدفة"
                       className="ev-select"
                       value={form.target_group}
                       onChange={e => setForm({ ...form, target_group: e.target.value as Event['target_group'] })}
@@ -1812,6 +1817,7 @@ export default function EventsPage() {
                 <div className="ev-field">
                   <label className="ev-label">مدة التطوع</label>
                   <select
+                    aria-label="مدة التطوع"
                     className="ev-select"
                     value={form.volunteer_duration}
                     onChange={e => setForm({ ...form, volunteer_duration: e.target.value as Event['volunteer_duration'] })}
@@ -1839,6 +1845,7 @@ export default function EventsPage() {
                     <label className="ev-toggle">
                       <input
                         type="checkbox"
+                        aria-label={label}
                         checked={!!(form as any)[key]}
                         onChange={e => setForm({ ...form, [key]: e.target.checked })}
                       />
@@ -1878,6 +1885,7 @@ export default function EventsPage() {
                 <div className="ev-field">
                   <label className="ev-label">طريقة التسجيل</label>
                   <select
+                    aria-label="طريقة التسجيل"
                     className="ev-select"
                     value={form.registration_method}
                     onChange={e => setForm({ ...form, registration_method: e.target.value as Event['registration_method'] })}
@@ -2048,7 +2056,7 @@ function EventProofModal({ event, onClose, onSuccess }: { event: Event; onClose:
             {proofType === 'image' ? (
               <div className="epm-field">
                 <label className="epm-label">صورة الإعلان (JPG/PNG — حتى 5MB)</label>
-                <input type="file" accept="image/*" onChange={handleFileChange}
+                <input type="file" accept="image/*" aria-label="رفع صورة الفعالية" onChange={handleFileChange}
                   style={{ width: '100%', padding: '8px', borderRadius: 10, border: '1.5px dashed rgba(100,116,139,0.35)',
                     background: 'transparent', fontFamily: "'Tajawal',sans-serif", cursor: 'pointer' }} />
                 {preview && (

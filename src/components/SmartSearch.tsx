@@ -40,6 +40,7 @@ export default function SmartSearch({ onSearch, suggestions = [] }: SmartSearchP
         <i className="fas fa-search text-slate-400" />
         <input
           type="text"
+          aria-label="بحث"
           value={query}
           onChange={(e) => handleSearch(e.target.value)}
           placeholder="ابحث باستخدام اللغة الطبيعية... (مثال: طلبات اليوم، رقم هاتف معين، خدمة استشارية)"
@@ -48,6 +49,7 @@ export default function SmartSearch({ onSearch, suggestions = [] }: SmartSearchP
         {isPending && <i className="fas fa-spinner fa-spin text-cyan-500" />}
         <button 
           onClick={() => setShowAdvanced(!showAdvanced)}
+          title={showAdvanced ? "إخفاء الفلاتر المتقدمة" : "إظهار الفلاتر المتقدمة"}
           className="text-slate-400 hover:text-cyan-500 transition-colors"
         >
           <i className={`fas fa-sliders-h ${showAdvanced ? 'text-cyan-500' : ''}`} />
@@ -81,6 +83,7 @@ export default function SmartSearch({ onSearch, suggestions = [] }: SmartSearchP
           <div>
             <label className="block text-xs font-bold text-slate-600 mb-1">الحالة</label>
             <select 
+              aria-label="فلتر الحالة"
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
               onChange={(e) => {
                 const newFilters = { ...filters, status: e.target.value };
@@ -99,6 +102,7 @@ export default function SmartSearch({ onSearch, suggestions = [] }: SmartSearchP
           <div>
             <label className="block text-xs font-bold text-slate-600 mb-1">نوع الخدمة</label>
             <select 
+              aria-label="فلتر نوع الخدمة"
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
               onChange={(e) => {
                 const newFilters = { ...filters, type: e.target.value };

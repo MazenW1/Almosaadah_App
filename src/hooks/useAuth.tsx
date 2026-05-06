@@ -278,8 +278,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (bootstrapDone) return;
       bootstrapDone = true;
       try {
-        let sessionData = null;
-        let sessionError = null;
+        let sessionData: { session: import('@supabase/supabase-js').Session | null } | null = null;
+        let sessionError: import('@supabase/supabase-js').AuthError | null = null;
 
         // retry حتى 3 مرات
         for (let i = 0; i < 3; i++) {
@@ -291,7 +291,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (!mounted) return;
 
-        if (sessionError && !sessionData?.session) {
+        if (sessionError && !(sessionData as any)?.session) {
           console.log('[useAuth] فشل استرداد الجلسة');
           if (mounted) { setLoading(false); setProfileLoading(false); setHasSession(false); }
           return;

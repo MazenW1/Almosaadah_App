@@ -643,6 +643,7 @@ export default function PhoneVerification() {
                   <input
                     key={index}
                     ref={el => inputRefs.current[index] = el}
+                    aria-label={`رمز التحقق رقم ${index + 1}`}
                     type="text"
                     inputMode="numeric"
                     maxLength={1}

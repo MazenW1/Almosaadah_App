@@ -17,7 +17,7 @@ const createRateLimiter = (max: number, windowMs: number, label = '') => {
 const apiRateLimiter    = createRateLimiter(15, 60000, 'dashboard-api');
 const submitRateLimiter = createRateLimiter(5,  60000, 'dashboard-submit');
 import AOS from 'aos';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseAdmin } from '../lib/supabase';
 import { useAuth } from '../hooks/useAuth';
 import RequestsTable from '../components/RequestsTable';
 import {
@@ -201,6 +201,7 @@ function InlineStatusDropdown({ requestId, currentStatus, isDark, onRefresh, sho
   const pillClass = isDark ? cfg.pill.dark : cfg.pill.light;
 
   const handleOpen = () => { setOpen(v => !v); };
+  const dropdownTitle = `تغيير حالة الطلب: ${cfg.label}`;
 
   const change = async (val: string) => {
     if (val === currentStatus) { setOpen(false); return; }
@@ -224,7 +225,7 @@ function InlineStatusDropdown({ requestId, currentStatus, isDark, onRefresh, sho
 
   return (
     <div className="relative">
-      <button onClick={handleOpen}
+      <button onClick={handleOpen} title={dropdownTitle}
         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold border shadow-sm cursor-pointer hover:opacity-80 transition-all ${pillClass}`}>
         <span className="relative flex-shrink-0 w-1.5 h-1.5">
           <span className={`absolute inset-0 rounded-full ${cfg.dot} animate-ping opacity-50`} />
@@ -293,7 +294,7 @@ function ContractCell({ requestId, contractUrl, onView, onUploaded, showToast }:
 
   return (
     <div className="flex flex-col items-start gap-1.5">
-      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={handleUpload} />
+      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" aria-label="رفع ملف العقد" onChange={handleUpload} />
       {contractUrl ? (
         <div className="flex flex-col gap-1 w-full">
           <button onClick={() => onView(contractUrl)}
@@ -502,6 +503,7 @@ export default function Dashboard() {
           admin_notes, 
           assigned_to,
           contract_url,
+          package_type,
           service:service_id(service_name, service_description), 
           employee:assigned_to(employee_name, employee_phone)
         `)
@@ -531,7 +533,8 @@ export default function Dashboard() {
           contract_url, 
           request_status, 
           request_notes, 
-          created_at, 
+          created_at,
+          package_type,
           user:user_id(association_name, user_phone, user_email), 
           service:service_id(service_name, service_description)
         `)
@@ -588,6 +591,7 @@ export default function Dashboard() {
           contract_url,
           admin_notes,
           assigned_to,
+          package_type,
           services:service_id(service_name),
           employees:assigned_to(employee_name, employee_phone)
         `)
@@ -684,7 +688,7 @@ export default function Dashboard() {
 
   // ── Realtime ───────────────────────────────────────────────────────────
   useEffect(() => {
-    let debounceTimer: NodeJS.Timeout;
+    let debounceTimer: ReturnType<typeof setTimeout>;
     const handleRealtimeUpdate = () => {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
@@ -739,9 +743,9 @@ export default function Dashboard() {
   const openAssignModal = async (id: string) => {
     setCurrentReqId(id);
     try {
-      const { data, error } = await supabase.from('employees').select('employee_id, employee_name, employee_email').eq('is_active', true);
+      const { data, error } = await supabase.from('employees').select('employee_id, employee_name, employee_email, employee_role, is_active').eq('is_active', true);
       if (error || !data?.length) { showToast('لا يوجد موظفون مفعلون', 'error'); return; }
-      setActiveEmployees(data); setSelectedEmployee('');
+      setActiveEmployees(data as Employee[]); setSelectedEmployee('');
       setModals(m => ({ ...m, assign: true }));
     } catch { showToast('خطأ في تحميل الموظفين', 'error'); }
   };
@@ -1264,8 +1268,24 @@ export default function Dashboard() {
                     return (
                       <tr key={r.request_id} className={`border-b transition-colors ${rowBg}`}>
                         <td className={`px-4 py-3 text-center text-[11px] font-bold ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{idx + 1}</td>
-                        <td className={`px-4 py-3 text-sm font-semibold ${dm ? 'text-white' : 'text-slate-800'}`}>
-                          {svc?.service_name || '—'}
+                        <td className="px-4 py-3">
+                          <div className={`text-sm font-semibold ${dm ? 'text-white' : 'text-slate-800'}`}>
+                            {svc?.service_name || '—'}
+                          </div>
+                          {r.package_type && (() => {
+                            const PKG: Record<string, { pill: string; icon: string }> = {
+                              'الماسية': { pill: dm ? 'bg-sky-900/50 text-sky-300 border-sky-500'           : 'bg-sky-50 text-sky-600 border-sky-300',           icon: 'fa-gem'      },
+                              'الذهبية': { pill: dm ? 'bg-amber-900/50 text-amber-300 border-amber-500'     : 'bg-amber-50 text-amber-600 border-amber-300',     icon: 'fa-crown'    },
+                              'الفضية':  { pill: dm ? 'bg-slate-700/70 text-slate-300 border-slate-500'     : 'bg-slate-100 text-slate-600 border-slate-300',    icon: 'fa-medal'    },
+                              'مرنة':    { pill: dm ? 'bg-emerald-900/50 text-emerald-300 border-emerald-500' : 'bg-emerald-50 text-emerald-600 border-emerald-300', icon: 'fa-sync-alt' },
+                            };
+                            const p = PKG[r.package_type] ?? { pill: dm ? 'bg-sky-900/50 text-sky-300 border-sky-500' : 'bg-sky-50 text-sky-600 border-sky-300', icon: 'fa-box' };
+                            return (
+                              <span className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${p.pill}`}>
+                                <i className={`fas ${p.icon} text-[9px]`} />{r.package_type}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className={`px-4 py-3 text-sm font-bold ${dm ? 'text-slate-200' : 'text-slate-700'}`}>
                           {r.user?.association_name || '—'}
@@ -1403,11 +1423,11 @@ export default function Dashboard() {
           <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
             <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
               <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-times-circle text-red-500" />رفض الطلب</h3>
-              <button onClick={() => setModals(m => ({ ...m, reject: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+              <button title="إغلاق" onClick={() => setModals(m => ({ ...m, reject: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5">
-              <label className={`block mb-2 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>سبب الرفض (ستظهر للعميل)</label>
-              <textarea className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
+              <label htmlFor="reject-notes" className={`block mb-2 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>سبب الرفض (ستظهر للعميل)</label>
+              <textarea id="reject-notes" className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
                 ${dm ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-500 focus:border-red-500 focus:ring-red-900/30' : 'border-slate-200 focus:border-red-400 focus:ring-red-100'}`}
                 rows={4} placeholder="اكتب سبب الرفض..." value={rejectNotes} onChange={e => setRejectNotes(e.target.value)} />
             </div>
@@ -1428,7 +1448,7 @@ export default function Dashboard() {
           <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
             <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
               <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-user-check text-violet-500" />إسناد موظف</h3>
-              <button onClick={() => setModals(m => ({ ...m, assign: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+              <button title="إغلاق" onClick={() => setModals(m => ({ ...m, assign: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-3">
               {activeEmployees.map(emp => (
@@ -1471,7 +1491,7 @@ export default function Dashboard() {
                 <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-50 text-cyan-600 hover:bg-cyan-100 transition-colors border border-cyan-200">
                   <i className="fas fa-external-link-alt" /> فتح في صفحة جديدة
                 </a>
-                <button onClick={() => setModals(m => ({ ...m, pdf: false }))} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"><i className="fas fa-times" /></button>
+                <button title="إغلاق" onClick={() => setModals(m => ({ ...m, pdf: false }))} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"><i className="fas fa-times" /></button>
               </div>
             </div>
             <div className="flex-1">
@@ -1488,7 +1508,7 @@ export default function Dashboard() {
           <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
             <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
               <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-user-plus text-cyan-500" />إضافة موظف جديد</h3>
-              <button onClick={() => setModals(m => ({ ...m, addEmp: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+              <button title="إغلاق" onClick={() => setModals(m => ({ ...m, addEmp: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
               {[
@@ -1539,7 +1559,7 @@ export default function Dashboard() {
           <div className={`rounded-2xl w-full max-w-lg shadow-2xl border ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
             <div className={`flex items-center justify-between px-6 py-4 border-b ${dm ? 'border-slate-700' : 'border-slate-100'}`}>
               <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-plus-circle text-cyan-500" />طلب خدمة جديدة</h3>
-              <button onClick={() => setModals(m => ({ ...m, newRequest: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+              <button title="إغلاق" onClick={() => setModals(m => ({ ...m, newRequest: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
               <div>
@@ -1573,7 +1593,7 @@ export default function Dashboard() {
          <div className={`rounded-2xl w-full max-w-lg shadow-2xl border max-h-[min(92vh,calc(100dvh-32px))] overflow-y-auto mx-2 sm:mx-0 ${dm ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
             <div className={`flex items-center justify-between px-6 py-4 border-b sticky top-0 z-10 ${dm ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-white'}`}>
               <h3 className={`font-extrabold flex items-center gap-2 text-base ${dm ? 'text-white' : 'text-slate-800'}`}><i className="fas fa-bullhorn text-orange-500" />نشر خبر جديد</h3>
-              <button onClick={() => setModals(m => ({ ...m, news: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
+              <button title="إغلاق" onClick={() => setModals(m => ({ ...m, news: false }))} className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${dm ? 'text-slate-400 hover:bg-slate-700 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}><i className="fas fa-times" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
              <div>
@@ -1584,6 +1604,7 @@ export default function Dashboard() {
     ref={newsImageRef}
     type="file"
     accept="image/*"
+    aria-label="رفع صورة الخبر"
     className="hidden"
     onChange={handleNewsImageUpload}
   />
@@ -1608,6 +1629,7 @@ export default function Dashboard() {
         </button>
         <button
           type="button"
+          title="حذف الصورة"
           onClick={() => setNewsForm(f => ({ ...f, image: '' }))}
           className="px-3 py-2.5 rounded-xl text-sm font-bold bg-red-50 text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-all"
         >
@@ -1657,7 +1679,7 @@ export default function Dashboard() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>التصنيف</label>
-                  <select value={newsForm.category} onChange={e => setNewsForm(f => ({ ...f, category: e.target.value }))}
+                  <select aria-label="تصنيف الخبر" value={newsForm.category} onChange={e => setNewsForm(f => ({ ...f, category: e.target.value }))}
                     className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
                       ${dm ? 'bg-slate-700 border-slate-600 text-white focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`}>
                     <option value="عام">عام</option>
@@ -1668,7 +1690,7 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <label className={`block mb-1.5 font-bold text-sm ${dm ? 'text-slate-300' : 'text-slate-700'}`}>التاريخ</label>
-                  <input type="date" value={newsForm.date} onChange={e => setNewsForm(f => ({ ...f, date: e.target.value }))}
+                  <input type="date" aria-label="تاريخ الخبر" value={newsForm.date} onChange={e => setNewsForm(f => ({ ...f, date: e.target.value }))}
                     className={`w-full px-4 py-3 border-2 rounded-xl font-tajawal text-sm focus:outline-none focus:ring-2 transition-all
                       ${dm ? 'bg-slate-700 border-slate-600 text-white focus:border-orange-500 focus:ring-orange-900/30' : 'border-slate-200 focus:border-orange-400 focus:ring-orange-100'}`} />
                 </div>

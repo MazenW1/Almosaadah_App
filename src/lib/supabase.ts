@@ -390,11 +390,14 @@ export const updateService = async (
   serviceId: string,
   updates: Partial<ServiceFull>
 ): Promise<void> => {
-  const { created_at, ...safeUpdates } = updates as any
-  const { error } = await supabase
+  const { service_id, created_at, is_active, ...safeUpdates } = updates as any
+  console.log('📤 updateService →', serviceId, safeUpdates)
+  const { data, error } = await supabase
     .from('services')
     .update(safeUpdates)
     .eq('service_id', serviceId)
+    .select()
+  console.log('📥 updateService result →', { data, error })
   if (error) throw error
 }
 
@@ -492,6 +495,7 @@ export const fetchMyReviews = (userId: string) =>
     .select('id, rating, review_text, is_active, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
+    .limit(5)
 
 export const createReview = (review: {
   user_id: string
@@ -524,7 +528,7 @@ export const checkUserBlocked = (userId: string) =>
     .from('user')
     .select('is_review_blocked')
     .eq('user_id', userId)
-    .single()
+    .maybeSingle()
 
 export const toggleUserBlockStatus = (userId: string, is_blocked: boolean) =>
   supabase
@@ -892,6 +896,11 @@ export const subscribeToJobs = (callback: (payload: any) => void) =>
     .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, callback)
     .subscribe()
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// أضف هذا الكود في نهاية ملف supabase.ts
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Supabase Admin Client (Service Role) ────────────────────
+export const supabaseAdmin = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(
+      import.meta.env.VITE_SUPABASE_URL as string,
+      import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY as string,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    )
+  : null

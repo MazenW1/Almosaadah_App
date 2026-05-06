@@ -1013,7 +1013,7 @@ export function RegisterModal({
 
           {/* Body */}
           <div className="rm-body">
-            <form onSubmit={handleSubmit}>
+            <form aria-label="نموذج التسجيل" onSubmit={handleSubmit}>
 
               {/* ── Step 1 ── */}
               {step === 1 && (
@@ -1022,7 +1022,7 @@ export function RegisterModal({
 
                     {/* Entity Type — أولاً حتى يتغير حقل الاسم بناءً على الاختيار */}
                     <div>
-                      <label className="rm-label">نوع الكيان</label>
+                      <span className="rm-label" role="group" aria-label="نوع الكيان">نوع الكيان</span>
                       <div className="rm-entity-grid">
                         {ENTITY_TYPES.map((et) => (
                           <button
@@ -1044,7 +1044,7 @@ export function RegisterModal({
 
                     {/* Association Name — يظهر بعد اختيار النوع مع label وplaceholder ديناميكيَّين */}
                     <div>
-                      <label className="rm-label">
+                      <label htmlFor="rm-name" className="rm-label">
                         {formData.entityType === 'فرد'
                           ? 'الاسم الكامل'
                           : formData.entityType
@@ -1052,6 +1052,7 @@ export function RegisterModal({
                           : 'الاسم'}
                       </label>
                       <input
+                        id="rm-name"
                         ref={firstInputRef}
                         type="text"
                         placeholder={
@@ -1073,8 +1074,9 @@ export function RegisterModal({
 
                     {/* Phone */}
                     <div>
-                      <label className="rm-label">رقم الجوال</label>
+                      <label htmlFor="rm-phone" className="rm-label">رقم الجوال</label>
                       <input
+                        id="rm-phone"
                         type="tel"
                         inputMode="numeric"
                         pattern="[0-9]*"
@@ -1103,8 +1105,9 @@ export function RegisterModal({
                     {/* License */}
                     {formData.entityType !== 'فرد' && (
                     <div>
-                      <label className="rm-label">رقم الترخيص</label>
+                      <label htmlFor="rm-license" className="rm-label">رقم الترخيص</label>
                       <input
+                        id="rm-license"
                         type="text"
                         inputMode="numeric"
                         pattern="[0-9]*"
@@ -1167,8 +1170,9 @@ export function RegisterModal({
 
                     {/* Email */}
                     <div>
-                      <label className="rm-label">البريد الإلكتروني</label>
+                      <label htmlFor="rm-email" className="rm-label">البريد الإلكتروني</label>
                       <input
+                        id="rm-email"
                         type="email"
                         placeholder="your@email.com"
                         value={formData.email}
@@ -1198,9 +1202,10 @@ export function RegisterModal({
 
                     {/* Password */}
                     <div>
-                      <label className="rm-label">كلمة المرور</label>
+                      <label htmlFor="rm-password" className="rm-label">كلمة المرور</label>
                       <div className="rm-pw-wrap">
                         <input
+                          id="rm-password"
                           type={showPassword ? 'text' : 'password'}
                           placeholder="8 أحرف على الأقل"
                           value={formData.password}
@@ -1211,7 +1216,7 @@ export function RegisterModal({
                           style={{ paddingLeft: '44px' }}
                           autoComplete="new-password"
                         />
-                        <button type="button" className="rm-pw-toggle" onClick={() => setShowPassword(!showPassword)}>
+                        <button type="button" title={showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"} className="rm-pw-toggle" onClick={() => setShowPassword(!showPassword)}>
                           {showPassword ? '🙈' : '👁️'}
                         </button>
                       </div>
@@ -1235,9 +1240,10 @@ export function RegisterModal({
 
                     {/* Confirm Password */}
                     <div>
-                      <label className="rm-label">تأكيد كلمة المرور</label>
+                      <label htmlFor="rm-confirm-password" className="rm-label">تأكيد كلمة المرور</label>
                       <div className="rm-pw-wrap">
                         <input
+                          id="rm-confirm-password"
                           type={showConfirmPassword ? 'text' : 'password'}
                           placeholder="أعد كتابة كلمة المرور"
                           value={formData.confirmPassword}
@@ -1253,7 +1259,7 @@ export function RegisterModal({
                           }}
                           autoComplete="new-password"
                         />
-                        <button type="button" className="rm-pw-toggle" onClick={() => setShowConfirmPassword(!showConfirmPassword)}>
+                        <button type="button" title={showConfirmPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"} className="rm-pw-toggle" onClick={() => setShowConfirmPassword(!showConfirmPassword)}>
                           {showConfirmPassword ? '🙈' : '👁️'}
                         </button>
                       </div>
@@ -1326,6 +1332,7 @@ export function RegisterModal({
                           <input
                             key={i}
                             ref={el => { otpRefs.current[i] = el; }}
+                            aria-label={`رمز التحقق رقم ${i + 1}`}
                             type="text"
                             inputMode="numeric"
                             maxLength={1}
