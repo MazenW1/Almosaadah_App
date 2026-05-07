@@ -1,5 +1,5 @@
 // components/RequestsTable.tsx
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -361,15 +361,28 @@ function AssignDropdown({ requestId, currentAssigned, onRefresh, showToast, isDa
   const [saving,    setSaving]    = useState(false);
   const [selected,  setSelected]  = useState(currentAssigned || '');
   const [open,      setOpen]      = useState(false);
-  const [pos,       setPos]       = useState({ top: 0, right: 0 });
+  const [dropPos,   setDropPos]   = useState({ top: 0, right: 0, width: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
 
-  const load = useCallback(async () => {
+  const calcPos = () => {
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.top - 4, right: window.innerWidth - r.right });
+      setDropPos({
+        top:   r.bottom + 4,
+        right: window.innerWidth - r.right,
+        width: Math.max(r.width, 190),
+      });
     }
-    if (employees.length) { setOpen(true); return; }
+  };
+
+  // احسب الموضع بعد ما تفتح القائمة
+  useEffect(() => {
+    if (open) calcPos();
+  }, [open]);
+
+  const load = useCallback(async () => {
+    calcPos();
+    if (employees.length) { setOpen(v => !v); return; }
     setLoading(true);
     try {
       const { data } = await supabase.from('employees')
@@ -398,7 +411,7 @@ function AssignDropdown({ requestId, currentAssigned, onRefresh, showToast, isDa
   const empName = employees.find(e => e.employee_id === selected)?.employee_name;
 
   return (
-    <div className="relative">
+    <div className="relative" style={{ overflow: 'visible' }}>
       <button ref={btnRef} onClick={load} disabled={loading || saving}
         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all min-w-[130px] justify-between
           ${selected
@@ -410,28 +423,49 @@ function AssignDropdown({ requestId, currentAssigned, onRefresh, showToast, isDa
             : <i className="fas fa-user-tie text-[10px]" />}
           {empName || 'اختر موظف'}
         </span>
-        <i className="fas fa-chevron-down text-[9px] opacity-60" />
+        <i className={`fas fa-chevron-down text-[9px] opacity-60 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          {/* Overlay */}
+          <div className="fixed inset-0 z-[9998]" onClick={() => setOpen(false)} />
+          {/* القائمة — absolute تحت الزر مباشرة */}
           <div
-            className={`fixed z-50 rounded-xl border shadow-xl overflow-hidden min-w-[180px]
+            className={`absolute z-[9999] rounded-xl border shadow-2xl top-full mt-1 right-0
               ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
-            style={{ top: pos.top, right: pos.right, transform: 'translateY(-100%)' }}
+            style={{
+              minWidth: '190px',
+              maxHeight: '240px',
+              overflowY: 'auto',
+              WebkitOverflowScrolling: 'touch',
+            }}
           >
+            {/* رأس القائمة */}
+            <div className={`sticky top-0 px-4 py-2 border-b text-[10px] font-bold
+              ${isDark ? 'border-slate-700 text-slate-400 bg-slate-800' : 'border-slate-100 text-slate-400 bg-slate-50'}`}>
+              <i className="fas fa-users text-[9px] ml-1" />
+              اختر موظفاً
+            </div>
             {employees.length === 0 ? (
-              <div className={`px-4 py-3 text-xs ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>لا يوجد موظفون</div>
+              <div className={`px-4 py-4 text-xs text-center ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>
+                <i className="fas fa-user-slash block text-2xl mb-2 opacity-30" />
+                لا يوجد موظفون
+              </div>
             ) : employees.map(emp => (
               <button key={emp.employee_id} onClick={() => assign(emp.employee_id)}
-                className={`w-full text-right px-4 py-2.5 text-xs font-semibold transition-colors flex items-center gap-2
+                className={`w-full text-right px-4 py-2.5 text-xs font-semibold transition-colors flex items-center gap-2 border-b last:border-0
                   ${selected === emp.employee_id
-                    ? 'bg-sky-600 text-white'
-                    : (isDark ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50')}`}>
-                <i className="fas fa-user-circle text-[11px] opacity-60" />
-                {emp.employee_name}
-                {selected === emp.employee_id && <i className="fas fa-check mr-auto text-[10px]" />}
+                    ? (isDark ? 'bg-sky-600/20 text-sky-400 border-sky-800' : 'bg-sky-50 text-sky-700 border-sky-100')
+                    : (isDark ? 'text-slate-200 hover:bg-slate-700 border-slate-700/40' : 'text-slate-700 hover:bg-slate-50 border-slate-50')}`}>
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] flex-shrink-0
+                  ${selected === emp.employee_id
+                    ? 'bg-sky-500 text-white'
+                    : (isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500')}`}>
+                  <i className="fas fa-user text-[8px]" />
+                </span>
+                <span className="flex-1">{emp.employee_name}</span>
+                {selected === emp.employee_id && <i className="fas fa-check text-sky-500 text-[10px]" />}
               </button>
             ))}
           </div>
@@ -466,7 +500,12 @@ function StatusDropdown({ requestId, currentStatus, onRefresh, showToast, isDark
   const handleOpen = () => {
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.top - 4, right: window.innerWidth - r.right });
+      const dropH = 220;
+      const spaceBelow = window.innerHeight - r.bottom;
+      const top = spaceBelow >= dropH + 8
+        ? r.bottom + 2
+        : r.top - dropH - 2;
+      setPos({ top: Math.max(8, top), right: window.innerWidth - r.right });
     }
     setOpen(v => !v);
   };
@@ -501,7 +540,7 @@ function StatusDropdown({ requestId, currentStatus, onRefresh, showToast, isDark
           <div
             className={`fixed z-50 rounded-2xl border shadow-2xl overflow-hidden min-w-[200px] p-1.5
               ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
-            style={{ top: pos.top, right: pos.right, transform: 'translateY(-100%)' }}
+            style={{ top: pos.top, right: pos.right }}
           >
             <div className={`px-3 py-2 text-[10px] font-bold uppercase tracking-widest mb-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
               تغيير الحالة
@@ -607,9 +646,9 @@ export default function RequestsTable({
 
   // ── الأعمدة حسب الدور ─────────────────────────────────────────────────
   const cols = {
-    admin:    ['#', 'رقم الطلب', 'اسم الجمعية', 'نوع الخدمة', 'الحالة', 'إسناد الموظف', 'العقد', 'التاريخ'],
-    employee: ['#', 'رقم الطلب', 'اسم الجمعية', 'جوال التواصل', 'نوع الخدمة', 'الحالة', 'العقد', 'التاريخ'],
-    client:   ['#', 'رقم الطلب', 'نوع الخدمة', 'الموظف المسؤول', 'جوال الموظف', 'الحالة', 'العقد', 'التاريخ'],
+    admin:    ['#', 'اسم الجمعية', 'نوع الخدمة', 'الحالة', 'إسناد الموظف', 'العقد', 'التاريخ'],
+    employee: ['#', 'اسم الجمعية', 'جوال التواصل', 'نوع الخدمة', 'الحالة', 'العقد', 'التاريخ'],
+    client:   ['#', 'نوع الخدمة', 'الموظف المسؤول', 'جوال الموظف', 'الحالة', 'العقد', 'التاريخ'],
   }[role];
 
   // ── خريطة ألوان الباقات (تطابق ServiceRequestModal) ─────────────────────
@@ -810,8 +849,8 @@ export default function RequestsTable({
       </div>
 
       {/* ── Table ──────────────────────────────────────────────────────── */}
-      <div className={`rounded-2xl border overflow-hidden shadow-sm ${card}`}>
-        <div className="overflow-x-auto">
+      <div className={`rounded-2xl border shadow-sm ${card}`} style={{ overflow: 'visible' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'visible', borderRadius: '1rem' }}>
           <table className="w-full border-collapse">
 
             <thead>
@@ -865,13 +904,6 @@ export default function RequestsTable({
 
                     {/* # */}
                     <td className={`px-4 py-3 text-center text-[11px] font-bold ${muted}`}>{idx+1}</td>
-
-                    {/* رقم الطلب */}
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-xs font-bold text-cyan-500">
-                        #{r.request_id?.substring(0,8).toUpperCase() ?? '—'}
-                      </span>
-                    </td>
 
                     {/* ─── Admin Columns ─── */}
                     {role === 'admin' && <>

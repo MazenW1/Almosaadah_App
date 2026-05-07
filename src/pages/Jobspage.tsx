@@ -703,6 +703,46 @@ body.modal-open { padding-right: 0 !important; }
           }
         }
 
+
+@keyframes confirm-pop {
+  from { opacity:0; transform:scale(0.82) translateY(24px); }
+  to   { opacity:1; transform:scale(1) translateY(0); }
+}
+@keyframes confirm-ring {
+  0%   { transform:scale(1); opacity:0.7; }
+  100% { transform:scale(1.7); opacity:0; }
+}
+@keyframes confirm-icon-in {
+  from { opacity:0; transform:scale(0.3) rotate(-20deg); }
+  to   { opacity:1; transform:scale(1) rotate(0deg); }
+}
+.confirm-overlay {
+  position:fixed; inset:0; z-index:9999999;
+  display:flex; align-items:center; justify-content:center; padding:20px;
+  background:rgba(8,18,40,0.78);
+  backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+  font-family:'Tajawal',sans-serif; direction:rtl;
+}
+.confirm-card {
+  position:relative; overflow:hidden; width:90%; max-width:400px;
+  background:linear-gradient(155deg,#0c1e35 0%,#0a2240 60%,#081828 100%);
+  border:1.5px solid rgba(239,68,68,0.35); border-radius:28px;
+  padding:40px 32px 32px; text-align:center;
+  box-shadow:0 32px 80px rgba(239,68,68,0.2),0 0 0 1px rgba(239,68,68,0.1);
+  animation:confirm-pop 0.45s cubic-bezier(.34,1.56,.64,1) both;
+}
+.confirm-deco1{position:absolute;top:-60px;right:-60px;width:200px;height:200px;border-radius:50%;background:rgba(239,68,68,0.06);pointer-events:none;}
+.confirm-deco2{position:absolute;bottom:-40px;left:-40px;width:150px;height:150px;border-radius:50%;background:rgba(239,68,68,0.04);pointer-events:none;}
+.confirm-icon-wrap{position:relative;margin:0 auto 22px;width:80px;height:80px;}
+.confirm-ring{position:absolute;inset:-8px;border-radius:50%;border:2px solid rgba(239,68,68,0.4);animation:confirm-ring 1.6s ease-out 0.3s infinite;}
+.confirm-icon-circle{width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,#ef4444,#dc2626);display:flex;align-items:center;justify-content:center;box-shadow:0 12px 36px rgba(239,68,68,0.45);animation:confirm-icon-in 0.45s 0.2s cubic-bezier(.34,1.56,.64,1) both;font-size:30px;}
+.confirm-title{margin:0 0 10px;font-size:20px;font-weight:900;color:#fef2f2;letter-spacing:-0.3px;}
+.confirm-sub{margin:0 0 26px;font-size:13px;font-weight:600;line-height:1.8;color:rgba(252,165,165,0.85);}
+.confirm-btns{display:flex;gap:10px;justify-content:center;}
+.confirm-cancel{flex:1;padding:11px;border-radius:14px;border:1.5px solid rgba(148,163,184,0.25);background:rgba(148,163,184,0.08);color:#94a3b8;font-family:'Tajawal',sans-serif;font-size:14px;font-weight:700;cursor:pointer;transition:all .18s;}
+.confirm-cancel:hover{background:rgba(148,163,184,0.15);color:#cbd5e1;}
+.confirm-ok{flex:1;padding:11px;border-radius:14px;border:none;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;font-family:'Tajawal',sans-serif;font-size:14px;font-weight:800;cursor:pointer;transition:all .18s;box-shadow:0 6px 20px rgba(239,68,68,0.35);}
+.confirm-ok:hover{background:linear-gradient(135deg,#f87171,#ef4444);box-shadow:0 8px 28px rgba(239,68,68,0.5);transform:translateY(-1px);}
 `;
 
 export default function JobsPage() {
@@ -726,6 +766,8 @@ export default function JobsPage() {
   const [form, setForm]                     = useState(INITIAL_FORM);
   const [cityInput, setCityInput]           = useState('');
   const [showCitySuggestions, setShowCitySuggestions] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{ open: boolean; title: string; message: string; onConfirm: (() => void) | null }>({ open: false, title: '', message: '', onConfirm: null });
+  const askConfirm = (title: string, message: string, onConfirm: () => void) => { setConfirmModal({ open: true, title, message, onConfirm }); };
 
   const isStaff = isAdmin || isEmployee;
 
@@ -896,7 +938,7 @@ export default function JobsPage() {
 
   const handleAdminDeleteJob = async (id: string) => {
     if (!isAdmin) return;
-    if (!window.confirm('هل أنت متأكد من حذف هذه الوظيفة؟')) return;
+    askConfirm('حذف الوظيفة', 'سيتم حذف هذه الوظيفة نهائياً ولا يمكن التراجع.', async () => {
     try {
       const { error } = await supabase.from('jobs').delete().eq('id', id);
       if (error) throw error;
@@ -906,6 +948,7 @@ export default function JobsPage() {
     } catch {
       showToast('حدث خطأ أثناء الحذف', 'error');
     }
+  });
   };
 
   /* تصفية الوظائف */
@@ -1806,6 +1849,26 @@ export default function JobsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Confirm Modal ── */}
+      {confirmModal.open && (
+        <div className="confirm-overlay">
+          <div className="confirm-card">
+            <div className="confirm-deco1" />
+            <div className="confirm-deco2" />
+            <div className="confirm-icon-wrap">
+              <div className="confirm-ring" />
+              <div className="confirm-icon-circle">🗑️</div>
+            </div>
+            <h2 className="confirm-title">{confirmModal.title}</h2>
+            <p className="confirm-sub">{confirmModal.message}</p>
+            <div className="confirm-btns">
+              <button className="confirm-cancel" onClick={() => setConfirmModal(p => ({ ...p, open: false }))}>إلغاء</button>
+              <button className="confirm-ok" onClick={() => { confirmModal.onConfirm?.(); setConfirmModal(p => ({ ...p, open: false })); }}>نعم، تأكيد</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1903,6 +1966,8 @@ function AdminJobsQueue({ onClose, onJobApproved }: { onClose: () => void; onJob
   const [processing, setProcessing] = useState<string | null>(null);
   const [tab, setTab]               = useState<'all' | 'pending_admin' | 'pending_proof'>('all');
   const [counts, setCounts]         = useState({ all: 0, pending_admin: 0, pending_proof: 0 });
+  const [confirmModal, setConfirmModal] = useState<{ open: boolean; title: string; message: string; onConfirm: (() => void) | null }>({ open: false, title: '', message: '', onConfirm: null });
+  const askConfirm = (title: string, message: string, onConfirm: () => void) => { setConfirmModal({ open: true, title, message, onConfirm }); };
 
   const fetchCounts = useCallback(async () => {
     try {
@@ -1989,7 +2054,7 @@ function AdminJobsQueue({ onClose, onJobApproved }: { onClose: () => void; onJob
 
   const handleReject = async (id: string) => {
     if (processing) return;
-    if (!window.confirm('هل أنت متأكد من رفض هذه الوظيفة؟')) return;
+    askConfirm('رفض الوظيفة', 'سيتم رفض هذه الوظيفة وحذفها نهائياً.', async () => {
     setProcessing(id);
     try {
       // جلب بيانات الوظيفة قبل الرفض
@@ -2016,6 +2081,7 @@ function AdminJobsQueue({ onClose, onJobApproved }: { onClose: () => void; onJob
     } finally {
       setProcessing(null);
     }
+  });
   };
 
   return (
@@ -2117,6 +2183,26 @@ function AdminJobsQueue({ onClose, onJobApproved }: { onClose: () => void; onJob
           )}
         </div>
       </div>
+
+      {/* ── Confirm Modal ── */}
+      {confirmModal.open && (
+        <div className="confirm-overlay">
+          <div className="confirm-card">
+            <div className="confirm-deco1" />
+            <div className="confirm-deco2" />
+            <div className="confirm-icon-wrap">
+              <div className="confirm-ring" />
+              <div className="confirm-icon-circle">🗑️</div>
+            </div>
+            <h2 className="confirm-title">{confirmModal.title}</h2>
+            <p className="confirm-sub">{confirmModal.message}</p>
+            <div className="confirm-btns">
+              <button className="confirm-cancel" onClick={() => setConfirmModal(p => ({ ...p, open: false }))}>إلغاء</button>
+              <button className="confirm-ok" onClick={() => { confirmModal.onConfirm?.(); setConfirmModal(p => ({ ...p, open: false })); }}>نعم، تأكيد</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

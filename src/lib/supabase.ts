@@ -46,6 +46,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     headers: {
       'X-Client-Info': 'almosaadah-web/1.0',
     },
+    fetch: (url, options) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      return fetch(url, { ...options, signal: controller.signal })
+        .finally(() => clearTimeout(timeout));
+    },
   },
 })
 

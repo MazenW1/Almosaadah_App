@@ -135,17 +135,52 @@ const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  // ── قراءة الكاش قبل أي شيء لتحديد الحالة الأولية فوراً ──────────────────
+  const _initialCache = (() => {
+    try {
+      // أولاً: نحاول نقرأ الكاش مباشرة بدون ما نحتاج الإيميل
+      const rawCache = localStorage.getItem('auth_profile_cache');
+      if (rawCache) {
+        const decoded = (() => {
+          try {
+            const d = atob(rawCache);
+            const SALT = 'alm_v1_';
+            if (!d.startsWith(SALT)) return null;
+            return JSON.parse(d.slice(SALT.length));
+          } catch { return null; }
+        })();
+        if (decoded?.email && decoded?.timestamp && Date.now() - decoded.timestamp < 10 * 60 * 1000) {
+          return decoded as LSCacheEntry;
+        }
+      }
+      // ثانياً: نحاول نقرأ الإيميل من sb-session
+      const raw = localStorage.getItem('sb-session');
+      if (!raw) return null;
+      let email: string | null = null;
+      try { email = JSON.parse(raw)?.user?.email; } catch {}
+      if (!email) {
+        // sb-session قد يكون base64
+        try {
+          const parts = raw.split('.');
+          if (parts.length >= 2) email = JSON.parse(atob(parts[1]))?.email;
+        } catch {}
+      }
+      if (!email) return null;
+      return readLSCache(email);
+    } catch { return null; }
+  })();
+
   const [user,            setUser]            = useState<AuthUser  | null>(null);
   const [session,         setSession]         = useState<Session   | null>(null);
-  const [employeeProfile, setEmployeeProfile] = useState<Employee  | null>(null);
-  const [userProfile,     setUserProfile]     = useState<User      | null>(null);
-  const [loading,         setLoading]         = useState(true);
-  const [profileLoading,  setProfileLoading]  = useState(true);
-  const [hasSession,      setHasSession]      = useState(false);
+  const [employeeProfile, setEmployeeProfile] = useState<Employee  | null>(_initialCache?.emp ?? null);
+  const [userProfile,     setUserProfile]     = useState<User      | null>(_initialCache?.usr ?? null);
+  const [loading,         setLoading]         = useState(!_initialCache);
+  const [profileLoading,  setProfileLoading]  = useState(!_initialCache);
+  const [hasSession,      setHasSession]      = useState(!!_initialCache);
 
-  const profileCache    = useRef<LSCacheEntry | null>(null);
+  const profileCache    = useRef<LSCacheEntry | null>(_initialCache);
   const isFetching      = useRef(false);
-  const currentEmailRef = useRef<string | null>(null);
+  const currentEmailRef = useRef<string | null>(_initialCache?.email ?? null);
 
   // ─── fetchProfiles ────────────────────────────────────────────────────────────
   const fetchProfiles = useCallback(async (email: string, forceRefresh = false) => {
@@ -177,7 +212,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUserProfile(lsCache.usr);
         setProfileLoading(false);
         setLoading(false);
-        setTimeout(() => fetchProfiles(email, true), 500);
+        // فقط نجدد إذا الكاش عمره أكثر من دقيقتين — يمنع الاهتزاز
+        const cacheAge = Date.now() - lsCache.timestamp;
+        if (cacheAge > 2 * 60 * 1000) {
+          setTimeout(() => fetchProfiles(email, true), 2000);
+        }
         return;
       }
     }
@@ -191,7 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfileLoading(true);
 
     const timeoutPromise = new Promise<'timeout'>(resolve =>
-      setTimeout(() => resolve('timeout'), 8000)
+      setTimeout(() => resolve('timeout'), 3000)
     );
 
     const fetchPromise = Promise.all([
@@ -272,26 +311,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
         setProfileLoading(false);
       }
-    }, 10_000);
+    }, 4_000);
 
     const bootstrap = async () => {
       if (bootstrapDone) return;
       bootstrapDone = true;
       try {
-        let sessionData: { session: import('@supabase/supabase-js').Session | null } | null = null;
-        let sessionError: import('@supabase/supabase-js').AuthError | null = null;
+        // ── خطوة 0: عرض الكاش فوراً قبل أي طلب شبكة ──────────────────────────
+        try {
+          // قراءة الكاش مباشرة من auth_profile_cache
+          const rawCache = localStorage.getItem('auth_profile_cache');
+          if (rawCache) {
+            try {
+              const d = atob(rawCache);
+              const SALT = 'alm_v1_';
+              if (d.startsWith(SALT)) {
+                const decoded = JSON.parse(d.slice(SALT.length));
+                if (decoded?.email && decoded?.timestamp && Date.now() - decoded.timestamp < 10 * 60 * 1000 && mounted) {
+                  setEmployeeProfile(decoded.emp);
+                  setUserProfile(decoded.usr);
+                  currentEmailRef.current = decoded.email;
+                  setHasSession(true);
+                  setLoading(false);
+                  setProfileLoading(false);
+                  profileCache.current = decoded;
+                }
+              }
+            } catch {}
+          }
+        } catch {}
 
-        // retry حتى 3 مرات
-        for (let i = 0; i < 3; i++) {
-          const { data, error } = await supabase.auth.getSession();
-          if (!error) { sessionData = data; break; }
-          sessionError = error;
-          await new Promise(r => setTimeout(r, 500 * (i + 1)));
-        }
+        // ── خطوة 1: جلب الـ session من Supabase ──────────────────────────────
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
         if (!mounted) return;
 
-        if (sessionError && !(sessionData as any)?.session) {
+        if (sessionError && !sessionData?.session) {
           console.log('[useAuth] فشل استرداد الجلسة');
           if (mounted) { setLoading(false); setProfileLoading(false); setHasSession(false); }
           return;
@@ -314,7 +369,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setHasSession(true);
         }
 
-        if (sess.user.email && mounted) await fetchProfiles(sess.user.email);
+        if (sess.user.email && mounted) {
+          // تحقق من الكاش مباشرة من localStorage
+          const rawC = localStorage.getItem('auth_profile_cache');
+          let cacheValid = false;
+          if (rawC) {
+            try {
+              const d = atob(rawC);
+              if (d.startsWith('alm_v1_')) {
+                const parsed = JSON.parse(d.slice('alm_v1_'.length));
+                const age = Date.now() - (parsed?.timestamp || 0);
+                // إذا الكاش نفس المستخدم وعمره أقل من دقيقتين — لا نسوي fetch
+                if (parsed?.email === sess.user.email && age < 2 * 60 * 1000) {
+                  cacheValid = true;
+                }
+              }
+            } catch {}
+          }
+          if (!cacheValid) {
+            await fetchProfiles(sess.user.email);
+          }
+        }
 
       } catch (err) {
         console.error('[useAuth] خطأ غير متوقع:', err);
@@ -324,7 +399,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    setTimeout(bootstrap, 100);
+    // شغّل فوراً بدون تأخير
+    bootstrap();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, sess) => {
