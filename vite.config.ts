@@ -7,7 +7,6 @@ const isProd = process.env.BUILD_MODE === 'prod'
 const isCapacitor = process.env.BUILD_TARGET === 'capacitor'
 
 export default defineConfig({
-  // إذا كان كاباسيتور نستخدم './' ، وإذا كان للدومين نستخدم '/'
   base: isCapacitor ? './' : '/', 
   plugins: [
     react(),
@@ -20,6 +19,12 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+    preserveSymlinks: true,
+  },
+  server: {
+    fs: {
+      strict: false,
     },
   },
 })
