@@ -12,7 +12,8 @@
     "baseUrl": ".",
     "ignoreDeprecations": "6.0",
     "strict": true,
-    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
     "paths": {
       "@/*": ["./src/*"]
     }
