@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { fetchServicesWithSections, subscribeToServices, deleteService } from '../lib/supabase';
 import type { ServiceFull } from '../lib/supabase';
-import { AddServiceModal } from './AddserviceModal';
+import { AddServiceModal } from './AddServiceModal';
 
 interface ServicesProps {
   onServiceSelect: (serviceName: string, serviceType?: string) => void;
