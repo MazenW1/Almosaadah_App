@@ -39,7 +39,7 @@ import JobsPage          from './pages/JobsPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import Contracts      from './pages/Contracts';
 import WhatsAppPage   from './pages/WhatsAppPage';
-
+import PrivacyPolicy from './pages/PrivacyPolicy';
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ ProtectedRoute ══════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -365,6 +365,7 @@ function AppInner() {
           <Route path="/profile"   element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/contracts" element={<ProtectedRoute><Contracts /></ProtectedRoute>} />
           <Route path="/whatsapp"  element={<ProtectedRoute><WhatsAppPage /></ProtectedRoute>} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
 

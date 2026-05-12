@@ -7,7 +7,7 @@ const isProd = process.env.BUILD_MODE === 'prod'
 const isCapacitor = process.env.BUILD_TARGET === 'capacitor'
 
 export default defineConfig({
-  base: isCapacitor ? './' : '/', 
+base: isCapacitor ? './' : '/',
   plugins: [
     react(),
     sourceIdentifierPlugin({

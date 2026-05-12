@@ -165,7 +165,6 @@ function SettingsTabComponent(props: SettingsTabProps) {
               <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'linear-gradient(135deg, #1e3a5f, #0891b2)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '3px solid rgba(8,145,178,0.4)', overflow: 'hidden' }}>
                 {profileAvatar ? <img src={profileAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 22, fontWeight: 700, color: '#fff' }}>م</span>}
               </div>
-            
               <button onClick={() => avatarInputRef.current?.click()} style={{ position: 'absolute', bottom: 0, left: 0, width: 24, height: 24, borderRadius: '50%', background: '#0891b2', border: '2px solid ' + card, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                 <i className="fas fa-camera" style={{ fontSize: 10, color: '#fff' }} />
               </button>
@@ -325,25 +324,118 @@ export default function WhatsAppPage() {
     }
   }, [messages, activeContact]);
 
-  // ── تحميل إعدادات API تلقائياً عند فتح الصفحة ──
+  // ── Realtime: استقبال رسائل جديدة ──
+  useEffect(() => {
+    if (!isAdminOrEmployee) return;
+    const channel = supabase
+      .channel('messages-realtime')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+        const m = payload.new as any;
+        const phone = m.phone_number;
+        const newMsg: WaMessage = {
+          id: m.id,
+          from: m.direction === 'inbound' ? 'contact' : 'agent',
+          text: m.body || '',
+          time: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+          status: m.status || 'sent',
+        };
+        setMessages(prev => ({ ...prev, [phone]: [...(prev[phone] || []), newMsg] }));
+        setContacts(prev => {
+          const exists = prev.find(c => c.id === phone);
+          if (exists) {
+            return prev.map(c => c.id === phone ? { ...c, lastMsg: m.body || '', lastTime: newMsg.time, unread: c.unread + (m.direction === 'inbound' ? 1 : 0) } : c);
+          }
+          const name = m.contact_name || phone;
+          const colors = ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'];
+          return [{ id: phone, name, phone, lastMsg: m.body || '', lastTime: newMsg.time, unread: 1, status: 'active', avatar: name.slice(0, 2), avatarBg: colors[phone.length % colors.length] }, ...prev];
+        });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [isAdminOrEmployee]);
+
+  // ── تحميل البيانات عند فتح الصفحة ──
   useEffect(() => {
     if (!isAdminOrEmployee || configLoaded) return;
-    const loadConfig = async () => {
+    const loadAll = async () => {
       try {
-        const { data } = await supabase
+        // تحميل إعدادات API
+        const { data: cfg } = await supabase
           .from('whatsapp_config')
           .select('display_phone, verified_name, quality_rating, is_active')
           .eq('config_key', 'main')
           .maybeSingle();
-        if (data) {
-          setDisplayPhone(data.display_phone || '');
-          setVerifiedName(data.verified_name || '');
-          if (data.is_active) setApiStatus('valid');
+        if (cfg) {
+          setDisplayPhone(cfg.display_phone || '');
+          setVerifiedName(cfg.verified_name || '');
+          if (cfg.is_active) setApiStatus('valid');
         }
-      } catch {}
+
+        // تحميل المحادثات من messages
+        const { data: msgs } = await supabase
+          .from('messages')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (msgs && msgs.length > 0) {
+          // بناء قائمة المحادثات من آخر رسالة لكل رقم
+          const contactMap: Record<string, WaContact> = {};
+          const messageMap: Record<string, WaMessage[]> = {};
+
+          msgs.forEach(m => {
+            const phone = m.phone_number;
+            const msgId = m.id;
+            const waMsg: WaMessage = {
+              id: msgId,
+              from: m.direction === 'inbound' ? 'contact' : 'agent',
+              text: m.body || '',
+              time: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+              status: (m.status as any) || 'sent',
+            };
+
+            if (!messageMap[phone]) messageMap[phone] = [];
+            messageMap[phone].push(waMsg);
+
+            if (!contactMap[phone]) {
+              const name = m.contact_name || phone;
+              const initials = name.slice(0, 2);
+              const colors = ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'];
+              contactMap[phone] = {
+                id: phone,
+                name,
+                phone,
+                lastMsg: m.body || '',
+                lastTime: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+                unread: m.direction === 'inbound' && m.status !== 'read' ? 1 : 0,
+                status: 'active',
+                avatar: initials,
+                avatarBg: colors[phone.length % colors.length],
+              };
+            }
+          });
+
+          // ترتيب رسائل كل محادثة تصاعدياً
+          Object.keys(messageMap).forEach(phone => {
+            messageMap[phone].sort((a, b) => a.time.localeCompare(b.time));
+          });
+
+          setContacts(Object.values(contactMap));
+          setMessages(messageMap);
+        }
+
+        // تحميل القوالب
+        const { data: tpls } = await supabase
+          .from('messages')
+          .select('template_name')
+          .not('template_name', 'is', null)
+          .limit(50);
+
+      } catch (err) {
+        console.error('loadAll error:', err);
+      }
       setConfigLoaded(true);
     };
-    loadConfig();
+    loadAll();
   }, [isAdminOrEmployee, configLoaded]);
 
   /* ── Helpers ── */
@@ -361,16 +453,66 @@ export default function WhatsAppPage() {
 
   const now = () => new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
 
-  /* ── Send Text ── */
-  const handleSend = () => {
+  /* ── Send Text — Meta Cloud API + Supabase ── */
+  const handleSend = async () => {
     if (!inputText.trim() || !activeContact) return;
     if (!sendRateLimiter.canProceed()) { showToast('أرسلت كثيراً، انتظر قليلاً', 'error'); return; }
     const clean = sanitizeInput(inputText);
-    const msg: WaMessage = { id: Date.now().toString(), from: 'agent', text: clean, time: now(), status: 'sent' };
+
+    // أضف الرسالة للـ UI فوراً (Optimistic Update)
+    const tempId = 'temp_' + Date.now();
+    const msg: WaMessage = { id: tempId, from: 'agent', text: clean, time: now(), status: 'sent' };
     setMessages(prev => ({ ...prev, [activeContact.id]: [...(prev[activeContact.id] || []), msg] }));
     setContacts(prev => prev.map(c => c.id === activeContact.id ? { ...c, lastMsg: clean, lastTime: now() } : c));
     setInputText('');
     setShowTemplatesPicker(false);
+
+    try {
+      // جيب credentials من Supabase
+      const { data: cfg } = await supabase
+        .from('whatsapp_config')
+        .select('api_token_enc, phone_number_id_enc')
+        .eq('config_key', 'main')
+        .maybeSingle();
+
+      if (cfg?.api_token_enc && cfg?.phone_number_id_enc) {
+        const token   = atob(cfg.api_token_enc);
+        const phoneId = atob(cfg.phone_number_id_enc);
+        const to = activeContact.phone.replace(/^\+/, '');
+
+        const res = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: clean } }),
+        });
+        const json = await res.json();
+
+        if (res.ok && json.messages?.[0]?.id) {
+          const waId = json.messages[0].id;
+          // حفظ في Supabase
+          await supabase.from('messages').insert({
+            phone_number: activeContact.phone,
+            contact_name: activeContact.name,
+            direction: 'outbound',
+            message_type: 'text',
+            body: clean,
+            wa_message_id: waId,
+            status: 'sent',
+          });
+          // تحديث الـ ID الحقيقي
+          setMessages(prev => ({
+            ...prev,
+            [activeContact.id]: (prev[activeContact.id] || []).map(m =>
+              m.id === tempId ? { ...m, id: waId, status: 'delivered' } : m
+            ),
+          }));
+        } else {
+          console.warn('Send failed:', json.error?.message);
+        }
+      }
+    } catch (err) {
+      console.error('Send error:', err);
+    }
   };
 
   /* ── Send Media ── */
@@ -744,14 +886,19 @@ export default function WhatsAppPage() {
       {/* Contacts List */}
       <div style={{ width: 280, borderLeft: `1px solid ${border}`, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '14px 12px 10px', borderBottom: `1px solid ${border}` }}>
-          {/* Search */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: inputBg, border: `1px solid ${border}`, borderRadius: 12, padding: '7px 12px', marginBottom: 10 }}>
-            <i className="fas fa-search" style={{ color: txt3, fontSize: 13 }} />
-            <input
-              value={searchQ} onChange={e => setSearchQ(e.target.value)}
-              placeholder="بحث في المحادثات..."
-              style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: txt1, fontFamily: "'Tajawal', sans-serif", width: '100%', direction: 'rtl' }}
-            />
+          {/* Search + Refresh */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, background: inputBg, border: `1px solid ${border}`, borderRadius: 12, padding: '7px 12px' }}>
+              <i className="fas fa-search" style={{ color: txt3, fontSize: 13 }} />
+              <input
+                value={searchQ} onChange={e => setSearchQ(e.target.value)}
+                placeholder="بحث في المحادثات..."
+                style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: txt1, fontFamily: "'Tajawal', sans-serif", width: '100%', direction: 'rtl' }}
+              />
+            </div>
+            <button onClick={() => setConfigLoaded(false)} title="تحديث المحادثات" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${border}`, background: 'transparent', cursor: 'pointer', color: txt3, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <i className="fas fa-sync-alt" style={{ fontSize: 12 }} />
+            </button>
           </div>
           {/* Filter Pills */}
           <div style={{ display: 'flex', gap: 5, overflowX: 'auto' }}>
@@ -772,9 +919,18 @@ export default function WhatsAppPage() {
         {/* List */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {filteredContacts.map(c => (
-            <div key={c.id} onClick={() => {
+            <div key={c.id} onClick={async () => {
               setActiveContact(c);
               setContacts(prev => prev.map(x => x.id === c.id ? { ...x, unread: 0 } : x));
+              // تحديث حالة الرسائل كـ "مقروءة" في Supabase
+              try {
+                await supabase
+                  .from('messages')
+                  .update({ status: 'read' })
+                  .eq('phone_number', c.phone)
+                  .eq('direction', 'inbound')
+                  .neq('status', 'read');
+              } catch {}
             }} style={{
               display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
               borderBottom: `1px solid ${border}`, cursor: 'pointer',
@@ -798,7 +954,11 @@ export default function WhatsAppPage() {
             </div>
           ))}
           {filteredContacts.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 40, color: txt3, fontSize: 13 }}>لا توجد محادثات</div>
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: txt3 }}>
+              <i className="fas fa-inbox" style={{ fontSize: 36, opacity: 0.25, display: 'block', marginBottom: 10 }} />
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>لا توجد محادثات</div>
+              <div style={{ fontSize: 11 }}>ستظهر المحادثات هنا عند وصول رسائل عبر Webhook</div>
+            </div>
           )}
         </div>
       </div>
@@ -1213,16 +1373,24 @@ export default function WhatsAppPage() {
             <h1 style={{ fontSize: 'clamp(22px,4vw,34px)', fontWeight: 900, margin: '0 0 8px', color: dm ? '#f1f5f9' : '#0f172a', lineHeight: 1.2 }}>منصة تواصل واتساب</h1>
             <p style={{ fontSize: 14, color: dm ? '#94a3b8' : '#64748b', margin: 0 }}>راسل عملاء الجمعيات وأرسل حملات جماعية بكل أمان</p>
           </div>
-          <div style={{ display: 'flex', gap: 12, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 12, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {[
-              { label: 'محادثات نشطة', value: contacts.filter(c => c.status !== 'closed').length, color: '#0891b2' },
-              { label: 'رسائل غير مقروءة', value: contacts.reduce((a, c) => a + c.unread, 0), color: '#7c3aed' },
+              { label: 'محادثات نشطة', value: contacts.filter(c => c.status !== 'closed').length, color: '#0891b2', icon: 'fas fa-comments' },
+              { label: 'رسائل غير مقروءة', value: contacts.reduce((a, c) => a + c.unread, 0), color: '#7c3aed', icon: 'fas fa-envelope' },
             ].map(s => (
               <div key={s.label} style={{ padding: '14px 20px', borderRadius: 16, background: dm ? 'rgba(8,145,178,0.1)' : 'rgba(255,255,255,0.85)', border: `1px solid ${border}`, textAlign: 'center', backdropFilter: 'blur(12px)', minWidth: 110 }}>
                 <div style={{ fontSize: 32, fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: dm ? '#94a3b8' : '#64748b', marginTop: 4 }}>{s.label}</div>
               </div>
             ))}
+            <div style={{ padding: '14px 20px', borderRadius: 16, background: dm ? 'rgba(8,145,178,0.1)' : 'rgba(255,255,255,0.85)', border: `1px solid ${border}`, textAlign: 'center', backdropFilter: 'blur(12px)', minWidth: 110 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: apiStatus === 'valid' ? '#22c55e' : apiStatus === 'invalid' ? '#ef4444' : txt3, lineHeight: 1, marginBottom: 4 }}>
+                <i className={`fas ${apiStatus === 'valid' ? 'fa-circle' : 'fa-circle'}`} style={{ fontSize: 10, marginLeft: 5, color: apiStatus === 'valid' ? '#22c55e' : apiStatus === 'invalid' ? '#ef4444' : '#94a3b8' }} />
+                {apiStatus === 'valid' ? 'متصل' : apiStatus === 'invalid' ? 'خطأ' : 'غير محدد'}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: dm ? '#94a3b8' : '#64748b' }}>حالة API</div>
+              {verifiedName && <div style={{ fontSize: 10, color: txt3, marginTop: 2 }}>{verifiedName}</div>}
+            </div>
           </div>
         </div>
       </div>
