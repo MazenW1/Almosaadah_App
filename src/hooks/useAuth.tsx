@@ -24,6 +24,11 @@ interface UseAuthReturn {
   hasSession:      boolean;
   showAdminDashboard: boolean;
   showUserOrders:     boolean;
+  // ── WhatsApp ──
+  /** user_id الجمعية أو employee_id الموظف الذي يُستخدم في عمليات واتساب */
+  waUserId:        string | null;
+  /** هل يملك الحساب الحالي صلاحية استخدام منصة واتساب */
+  canUseWhatsApp:  boolean;
   signIn:         (email: string, password: string) => Promise<{ error: any }>;
   signUp:         (email: string, password: string) => Promise<{ error: any }>;
   signOut:        () => Promise<void>;
@@ -612,6 +617,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const isClient = !isAdmin && !isEmployee && !!user;
 
+  // ─── WhatsApp Computed ────────────────────────────────────────────────────────
+  // waUserId: employee_id للموظف/الأدمن فقط
+  const waUserId: string | null = employeeProfile?.employee_id ?? null;
+
+  // canUseWhatsApp: الأدمن والموظف النشط فقط — مطابق لـ isAdminOrEmployee
+  const canUseWhatsApp: boolean = isAdminOrEmployee;
+
   // ─── Value ────────────────────────────────────────────────────────────────────
   const value: UseAuthReturn = {
     user,
@@ -627,6 +639,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     hasSession,
     showAdminDashboard: isAdmin || isEmployee,
     showUserOrders:     isClient,
+    // WhatsApp
+    waUserId,
+    canUseWhatsApp,
     signIn,
     signUp,
     signOut,

@@ -10,7 +10,7 @@ import 'aos/dist/aos.css';
 import { useAuth }                        from './hooks/useAuth';
 import { useToast, ToastContainer }       from './hooks/useToast';
 import { useNews }                        from './hooks/useNews';
-import {useDarkMode}                      from "./hooks/useDarkMode"
+import { useDarkMode }                    from './hooks/useDarkMode';
 import { supabase }                       from './lib/supabase';
 import { notifyAdminNewServiceRequest }   from './lib/notificationHelpers';
 
@@ -37,7 +37,8 @@ import ProjectsPage      from './pages/ProjectsPage';
 import EventsPage        from './pages/EventsPage';
 import JobsPage          from './pages/JobsPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
-import Contracts from './pages/Contracts';
+import Contracts      from './pages/Contracts';
+import WhatsAppPage   from './pages/WhatsAppPage';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ═══ ProtectedRoute ══════════════════════════════════════════════════════════════
@@ -363,6 +364,7 @@ function AppInner() {
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/profile"   element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/contracts" element={<ProtectedRoute><Contracts /></ProtectedRoute>} />
+          <Route path="/whatsapp"  element={<ProtectedRoute><WhatsAppPage /></ProtectedRoute>} />
           <Route path="*"          element={<Navigate to="/" replace />} />
         </Routes>
 

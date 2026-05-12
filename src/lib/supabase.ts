@@ -903,6 +903,7 @@ export const subscribeToJobs = (callback: (payload: any) => void) =>
     .subscribe()
 
 // ─── Supabase Admin Client (Service Role) ────────────────────
+// ─── Supabase Admin (اختياري) ─────────────────────────────────────────────────
 export const supabaseAdmin = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY
   ? createClient(
       import.meta.env.VITE_SUPABASE_URL as string,
@@ -910,3 +911,226 @@ export const supabaseAdmin = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
   : null
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ WhatsApp Types ═════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type WaDirection      = 'inbound' | 'outbound'
+export type WaMessageType    = 'text' | 'image' | 'file' | 'location' | 'template'
+export type WaStatus         = 'sent' | 'delivered' | 'read' | 'failed'
+export type WaCampaignStatus = 'pending' | 'running' | 'done' | 'failed'
+
+// Config — مشترك للنظام كله (ليس per-user)
+export interface WhatsAppConfig {
+  id:                  string
+  config_key:          string   // 'main' دائماً
+  display_phone?:      string   // رقم العرض (غير مشفر)
+  verified_name?:      string
+  quality_rating?:     string
+  is_active:           boolean
+  created_at:          string
+  updated_at:          string
+  // الحقول المشفرة لا تُرجع للواجهة مباشرة
+}
+
+export interface WaMessage {
+  id:               string
+  employee_id?:     string
+  phone_number:     string
+  contact_name?:    string
+  direction:        WaDirection
+  message_type:     WaMessageType
+  body?:            string
+  media_url?:       string
+  media_mime_type?: string
+  template_name?:   string
+  wa_message_id?:   string
+  status:           WaStatus
+  error_message?:   string
+  reply_to_id?:     string
+  is_bulk:          boolean
+  bulk_campaign_id?:string
+  created_at:       string
+  updated_at:       string
+}
+
+export interface WaBulkCampaign {
+  id:            string
+  employee_id?:  string
+  template_name: string
+  template_body: string
+  total_count:   number
+  sent_count:    number
+  failed_count:  number
+  status:        WaCampaignStatus
+  created_at:    string
+  updated_at:    string
+}
+
+export interface WaConversation {
+  phone_number:      string
+  contact_name?:     string
+  last_message:      string
+  last_direction:    WaDirection
+  last_message_at:   string
+  last_status:       WaStatus
+  last_employee_id?: string
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ WhatsApp Config Operations ═════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** جلب إعدادات الحساب (display_phone, verified_name فقط — بدون credentials) */
+export const fetchWhatsAppConfig = () =>
+  supabase
+    .from('whatsapp_config')
+    .select('id, config_key, display_phone, verified_name, quality_rating, is_active, updated_at')
+    .eq('config_key', 'main')
+    .eq('is_active', true)
+    .maybeSingle()
+
+/** حفظ credentials — يمر عبر Edge Function عشان التشفير يصير في السيرفر */
+export const upsertWhatsAppConfig = (config: {
+  apiToken:       string
+  phoneNumberId:  string
+  wabaId?:        string
+  webhookSecret?: string
+}) => callWaFunction('save-config', config)
+
+// ─── Helper: استدعاء Edge Function ───────────────────────────────────────────
+const callWaFunction = async (action: string, body: object) => {
+  const { data, error } = await supabase.functions.invoke('whatsapp', {
+    body: { action, ...body },
+  })
+  if (error) throw new Error(error.message || 'خطأ في الاتصال بـ Edge Function')
+  if (data?.error) throw new Error(data.error)
+  return data
+}
+
+/** اختبار الاتصال بـ Meta API — يمر عبر Edge Function */
+export const verifyWhatsAppApi = async (apiToken: string, phoneNumberId: string) => {
+  const data = await callWaFunction('verify', { apiToken, phoneNumberId })
+  return data as { valid: boolean; displayPhone: string; verifiedName: string; qualityRating: string }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ WhatsApp Messages Operations ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** جلب المحادثات */
+export const fetchWaConversations = () =>
+  supabase
+    .from('conversations')
+    .select('*')
+    .order('last_message_at', { ascending: false })
+
+/** جلب رسائل محادثة معينة */
+export const fetchWaMessages = (phone: string, limit = 50) =>
+  supabase
+    .from('messages')
+    .select('*')
+    .eq('phone_number', phone)
+    .order('created_at', { ascending: true })
+    .limit(limit)
+
+/** إرسال رسالة نصية */
+export const sendWaText = async (payload: {
+  employeeId?: string; to: string; message: string
+}) => {
+  const data = await callWaFunction('send', payload)
+  return data as { success: boolean; messageId: string; waMessageId: string }
+}
+
+/** إرسال وسائط */
+export const sendWaMedia = async (payload: {
+  employeeId?: string; to: string
+  mediaType: 'image' | 'document' | 'audio' | 'video'
+  mediaUrl: string; caption?: string; fileName?: string
+}) => callWaFunction('send-media', payload)
+
+/** إرسال موقع */
+export const sendWaLocation = async (payload: {
+  employeeId?: string; to: string
+  lat: number; lng: number; name?: string; address?: string
+}) => callWaFunction('send-location', payload)
+
+/** إرسال قالب */
+export const sendWaTemplate = async (payload: {
+  employeeId?: string; to: string
+  templateName: string; languageCode?: string; components?: object[]
+}) => callWaFunction('send-template', payload)
+
+/** إرسال جماعي */
+export const sendWaBulk = async (payload: {
+  employeeId?: string; numbers: string[]
+  templateName: string; languageCode?: string; components?: object[]
+}) => {
+  const data = await callWaFunction('bulk', payload)
+  return data as { success: boolean; campaignId: string; total: number }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ WhatsApp Realtime ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** الاستماع للرسائل الجديدة */
+export const subscribeToWaMessages = (
+  onMessage: (msg: WaMessage) => void
+) =>
+  supabase
+    .channel('wa_messages')
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages' },
+      payload => onMessage(payload.new as WaMessage)
+    )
+    .subscribe()
+
+/** الاستماع لتحديثات الحالة */
+export const subscribeToWaStatuses = (
+  onUpdate: (msg: Partial<WaMessage>) => void
+) =>
+  supabase
+    .channel('wa_statuses')
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'messages' },
+      payload => onUpdate(payload.new as Partial<WaMessage>)
+    )
+    .subscribe()
+
+/** الاستماع لتحديثات الحملة */
+export const subscribeToWaCampaign = (
+  campaignId: string,
+  onUpdate: (c: Partial<WaBulkCampaign>) => void
+) =>
+  supabase
+    .channel(`wa_campaign_${campaignId}`)
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'bulk_campaigns', filter: `id=eq.${campaignId}` },
+      payload => onUpdate(payload.new as Partial<WaBulkCampaign>)
+    )
+    .subscribe()
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══ WhatsApp Media Upload ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const uploadWaMedia = async (file: File, employeeId: string): Promise<string> => {
+  const ALLOWED = ['image/jpeg','image/png','image/webp','application/pdf',
+    'application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+  if (!ALLOWED.includes(file.type)) throw new Error('نوع الملف غير مدعوم')
+  if (file.size > 16 * 1024 * 1024) throw new Error('الحجم أكبر من 16MB')
+
+  const ext      = file.name.split('.').pop()?.toLowerCase() || 'bin'
+  const filePath = `whatsapp-media/${employeeId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+
+  const { error } = await supabase.storage
+    .from('whatsapp-media')
+    .upload(filePath, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+
+  if (error) throw new Error('فشل رفع الملف: ' + error.message)
+
+  const { data: urlData } = supabase.storage.from('whatsapp-media').getPublicUrl(filePath)
+  return urlData.publicUrl
+}

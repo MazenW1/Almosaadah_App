@@ -1081,6 +1081,46 @@ export function Header({
                     <span>طلباتي</span>
                   </Link>
                 )}
+
+                {/* ── زر واتساب — للأدمن والموظف فقط ── */}
+                {(finalIsAdmin || finalIsEmployee) && (
+                  <Link
+                    to="/whatsapp"
+                    title="منصة الرسائل"
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                      border: '1.5px solid rgba(37,211,102,0.3)',
+                      background: currentPage === '/whatsapp'
+                        ? 'linear-gradient(135deg,#25d366,#128c7e)'
+                        : 'rgba(37,211,102,0.07)',
+                      color: currentPage === '/whatsapp' ? '#fff' : '#25d366',
+                      transition: 'all 0.25s cubic-bezier(0.34,1.56,0.64,1)',
+                      textDecoration: 'none',
+                      boxShadow: currentPage === '/whatsapp' ? '0 4px 14px rgba(37,211,102,0.4)' : 'none',
+                    }}
+                    onMouseEnter={e => {
+                      if (currentPage !== '/whatsapp') {
+                        (e.currentTarget as HTMLAnchorElement).style.background = 'linear-gradient(135deg,#25d366,#128c7e)';
+                        (e.currentTarget as HTMLAnchorElement).style.color = '#fff';
+                        (e.currentTarget as HTMLAnchorElement).style.boxShadow = '0 4px 14px rgba(37,211,102,0.4)';
+                        (e.currentTarget as HTMLAnchorElement).style.transform = 'translateY(-2px) scale(1.08)';
+                        (e.currentTarget as HTMLAnchorElement).style.borderColor = '#25d366';
+                      }
+                    }}
+                    onMouseLeave={e => {
+                      if (currentPage !== '/whatsapp') {
+                        (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(37,211,102,0.07)';
+                        (e.currentTarget as HTMLAnchorElement).style.color = '#25d366';
+                        (e.currentTarget as HTMLAnchorElement).style.boxShadow = 'none';
+                        (e.currentTarget as HTMLAnchorElement).style.transform = 'none';
+                        (e.currentTarget as HTMLAnchorElement).style.borderColor = 'rgba(37,211,102,0.3)';
+                      }
+                    }}
+                  >
+                    <i className="fab fa-whatsapp" style={{ fontSize: 20 }} />
+                  </Link>
+                )}
               </>
             )}
 
