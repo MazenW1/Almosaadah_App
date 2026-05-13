@@ -343,14 +343,11 @@ export default function WhatsAppPage() {
         setContacts(prev => {
           const exists = prev.find(c => c.id === phone);
           if (exists) {
-            return [
-              { ...exists, lastMsg: m.body || '', lastTime: newMsg.time, unread: exists.unread + (m.direction === 'inbound' ? 1 : 0) },
-              ...prev.filter(c => c.id !== phone)
-            ];
+            return prev.map(c => c.id === phone ? { ...c, lastMsg: m.body || '', lastTime: newMsg.time, unread: c.unread + (m.direction === 'inbound' ? 1 : 0) } : c);
           }
           const name = m.contact_name || phone;
           const colors = ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'];
-          return [{ id: phone, name, phone, lastMsg: m.body || '', lastTime: newMsg.time, unread: m.direction === 'inbound' ? 1 : 0, status: 'active', avatar: name.slice(0, 2), avatarBg: colors[phone.length % colors.length] }, ...prev];
+          return [{ id: phone, name, phone, lastMsg: m.body || '', lastTime: newMsg.time, unread: 1, status: 'active', avatar: name.slice(0, 2), avatarBg: colors[phone.length % colors.length] }, ...prev];
         });
       })
       .subscribe();
@@ -439,7 +436,7 @@ export default function WhatsAppPage() {
       setConfigLoaded(true);
     };
     loadAll();
-  }, [isAdminOrEmployee, configLoaded]); // configLoaded يتحكم في إعادة التحميل
+  }, [isAdminOrEmployee, configLoaded]);
 
   /* ── Helpers ── */
   const currentMsgs = activeContact ? (messages[activeContact.id] || []) : [];
@@ -472,9 +469,8 @@ export default function WhatsAppPage() {
 
     try {
       // إرسال عبر Edge Function — تفك التشفير وترسل لميتا وتحفظ في Supabase
-      const { data, error } = await supabase.functions.invoke('whatsapp', {
+      const { data, error } = await supabase.functions.invoke('whatsapp?action=send', {
         body: {
-          action:     'send',
           to:         activeContact.phone,
           message:    clean,
           employeeId: employeeProfile?.employee_id,
@@ -592,15 +588,13 @@ export default function WhatsAppPage() {
     setBulkProgress(10);
 
     try {
-      const { data, error } = await supabase.functions.invoke('whatsapp', {
+      const { data, error } = await supabase.functions.invoke('whatsapp?action=bulk', {
         body: {
-          action:       'bulk',
           numbers:      bulkParsed,
-          templateName: metaTemplateId.trim() || 'custom',
-          languageCode: 'ar',
+          templateName: metaTemplateId.trim() || undefined,
+          languageCode: bulkCategory === 'MARKETING' ? 'ar' : 'en',
           employeeId:   employeeProfile?.employee_id,
-          // إذا مافيه template ID نرسل نص حر
-          ...(metaTemplateId.trim() ? {} : { freeText: bulkTemplate.trim() }),
+          freeText:     !metaTemplateId.trim() ? bulkTemplate.trim() : undefined,
         },
       });
 
