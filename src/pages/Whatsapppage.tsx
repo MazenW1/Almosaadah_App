@@ -329,6 +329,12 @@ export default function WhatsAppPage() {
     if (!isAdminOrEmployee) return;
     const channel = supabase
       .channel('messages-realtime')
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        const phone = payload?.phone;
+        if (!phone) return;
+        setTypingContacts(prev => new Set([...prev, phone]));
+        setTimeout(() => setTypingContacts(prev => { const n = new Set(prev); n.delete(phone); return n; }), 3000);
+      })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
         const m = payload.new as any;
         const phone = m.phone_number;
@@ -526,18 +532,67 @@ export default function WhatsAppPage() {
     fileInputRef.current?.click();
   };
 
-  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !activeContact) return;
     const isImage = file.type.startsWith('image/');
-    const url = URL.createObjectURL(file);
+    const localUrl = URL.createObjectURL(file);
+    const tempId = 'temp_' + Date.now();
+
+    // أضف للـ UI فوراً
     const msg: WaMessage = {
-      id: Date.now().toString(), from: 'agent', time: now(), status: 'sent',
+      id: tempId, from: 'agent', time: now(), status: 'sent',
       text: '', mediaType: isImage ? 'image' : 'file',
-      mediaUrl: url, fileName: file.name,
+      mediaUrl: localUrl, fileName: file.name,
     };
     setMessages(prev => ({ ...prev, [activeContact.id]: [...(prev[activeContact.id] || []), msg] }));
     e.target.value = '';
+
+    try {
+      // رفع الملف لـ Supabase Storage
+      const ext = file.name.split('.').pop();
+      const path = `whatsapp/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('media').upload(path, file);
+      if (upErr) throw new Error('فشل رفع الملف');
+
+      const { data: urlData } = supabase.storage.from('media').getPublicUrl(path);
+      const publicUrl = urlData.publicUrl;
+
+      // إرسال عبر Edge Function
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp?action=send-media`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            to:        activeContact.phone.replace(/^\+/, ''),
+            mediaType: isImage ? 'image' : 'document',
+            mediaUrl:  publicUrl,
+            fileName:  file.name,
+            employeeId: employeeProfile?.employee_id,
+          }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || data?.error) throw new Error(data?.error || 'فشل الإرسال');
+
+      // تحديث الـ ID
+      setMessages(prev => ({
+        ...prev,
+        [activeContact.id]: (prev[activeContact.id] || []).map(m =>
+          m.id === tempId ? { ...m, id: data.waMessageId || tempId, mediaUrl: publicUrl } : m
+        ),
+      }));
+    } catch (err: any) {
+      showToast(err.message || 'فشل إرسال الملف', 'error');
+      setMessages(prev => ({
+        ...prev,
+        [activeContact.id]: (prev[activeContact.id] || []).filter(m => m.id !== tempId),
+      }));
+    }
   };
 
   /* ── Template Pick ── */
@@ -774,15 +829,15 @@ export default function WhatsAppPage() {
   /* MESSAGE BUBBLE */
   const renderMsgBubble = (msg: WaMessage) => {
     const isOut = msg.from === 'agent';
-    if (msg.mediaType === 'image' && msg.mediaUrl) {
+    if ((mediaType === 'image') && mediaUrl) {
       return (
         <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
-          <img src={msg.mediaUrl} alt="صورة" style={{ borderRadius: 12, maxWidth: '100%', display: 'block', cursor: 'pointer' }} onClick={() => window.open(msg.mediaUrl, '_blank')} />
+          <img src={mediaUrl} alt="صورة" style={{ borderRadius: 12, maxWidth: '100%', display: 'block', cursor: 'pointer' }} onClick={() => window.open(mediaUrl, '_blank')} />
           <div style={{ fontSize: 11, color: txt3, marginTop: 3, textAlign: isOut ? 'right' : 'left' }}>{msg.time}</div>
         </div>
       );
     }
-    if (msg.mediaType === 'file' && msg.fileName) {
+    if ((mediaType === 'file') && (msg.fileName || mediaUrl)) {
       return (
         <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
           <div style={{ background: isOut ? 'rgba(8,145,178,0.15)' : (dm ? 'rgba(30,41,59,0.9)' : '#fff'), border: `1px solid ${border}`, borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -963,6 +1018,16 @@ export default function WhatsAppPage() {
           {/* Messages */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, background: dm ? 'rgba(7,15,30,0.5)' : 'rgba(240,244,248,0.6)' }}>
             {currentMsgs.map(msg => <div key={msg.id}>{renderMsgBubble(msg)}</div>)}
+            {activeContact && typingContacts.has(activeContact.id) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 28, height: 28, borderRadius: '50%', background: activeContact.avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#fff', fontWeight: 700, flexShrink: 0 }}>{activeContact.avatar}</div>
+                <div style={{ background: dm ? 'rgba(30,41,59,0.9)' : '#fff', borderRadius: '4px 16px 16px 16px', padding: '10px 14px', display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {[0,1,2].map(i => (
+                    <div key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: '#94a3b8', animation: `typing-dot 1.2s ${i*0.2}s infinite ease-in-out` }} />
+                  ))}
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
 
@@ -1306,6 +1371,8 @@ export default function WhatsAppPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
         @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes typing-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
         @keyframes spin { to { transform: rotate(360deg); } }
         .fa-spin { animation: spin 1s linear infinite; }
         * { box-sizing: border-box; }
