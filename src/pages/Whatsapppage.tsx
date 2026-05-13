@@ -726,7 +726,7 @@ export default function WhatsAppPage() {
     }
   };
 
-  /* ── API Save — يحفظ مباشرة في Supabase ── */
+  /* ── API Save — يحفظ عبر Edge Function (AES-GCM) ── */
   const handleSaveApi = async () => {
     if (!apiToken.trim() || !phoneNumberId.trim()) {
       showToast('أدخل البيانات المطلوبة أولاً', 'error');
@@ -734,39 +734,34 @@ export default function WhatsAppPage() {
     }
     setSavingApi(true);
     try {
-      // تحقق أولاً
       const res = await fetch(
-        `https://graph.facebook.com/v19.0/${phoneNumberId.trim()}`,
-        { headers: { Authorization: `Bearer ${apiToken.trim()}` } }
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            action:        'save-config',
+            apiToken:      apiToken.trim(),
+            phoneNumberId: phoneNumberId.trim(),
+            wabaId:        wabaId.trim() || undefined,
+            webhookSecret: webhookSecret.trim() || undefined,
+          }),
+        }
       );
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json.error?.message || 'Token غير صحيح');
-
-      // احفظ في Supabase (مشفّر بـ base64 مؤقتاً — استبدل بـ Edge Function لاحقاً)
-      const { error: dbErr } = await supabase
-        .from('whatsapp_config')
-        .upsert({
-          config_key:          'main',
-          api_token_enc:       btoa(apiToken.trim()),
-          phone_number_id_enc: btoa(phoneNumberId.trim()),
-          waba_id_enc:         wabaId ? btoa(wabaId.trim()) : null,
-          webhook_secret_enc:  webhookSecret ? btoa(webhookSecret.trim()) : null,
-          display_phone:       json.display_phone_number || '',
-          verified_name:       json.verified_name || '',
-          is_active:           true,
-        }, { onConflict: 'config_key' });
-
-      if (dbErr) throw new Error(dbErr.message);
+      const data = await res.json();
+      if (!res.ok || data?.error) throw new Error(data?.error || 'فشل الحفظ');
 
       setApiStatus('valid');
-      setDisplayPhone(json.display_phone_number || '');
-      setVerifiedName(json.verified_name || '');
-      // امسح الحقول الحساسة
+      setDisplayPhone(data.displayPhone || '');
+      setVerifiedName(data.verifiedName || '');
       setApiToken('');
       setPhoneNumberId('');
       setWabaId('');
       setWebhookSecret('');
-      showToast('✅ تم حفظ إعدادات API بنجاح', 'success');
+      showToast('✅ تم حفظ إعدادات API بأمان', 'success');
     } catch (err: any) {
       showToast(err.message || 'حدث خطأ أثناء الحفظ', 'error');
     } finally {
@@ -829,15 +824,17 @@ export default function WhatsAppPage() {
   /* MESSAGE BUBBLE */
   const renderMsgBubble = (msg: WaMessage) => {
     const isOut = msg.from === 'agent';
-    if ((mediaType === 'image') && mediaUrl) {
+    const msgMediaType = msg.mediaType;
+    const msgMediaUrl  = msg.mediaUrl;
+    if ((msgMediaType === 'image') && msgMediaUrl) {
       return (
         <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
-          <img src={mediaUrl} alt="صورة" style={{ borderRadius: 12, maxWidth: '100%', display: 'block', cursor: 'pointer' }} onClick={() => window.open(mediaUrl, '_blank')} />
+          <img src={msgMediaUrl} alt="صورة" style={{ borderRadius: 12, maxWidth: '100%', display: 'block', cursor: 'pointer' }} onClick={() => window.open(msgMediaUrl, '_blank')} />
           <div style={{ fontSize: 11, color: txt3, marginTop: 3, textAlign: isOut ? 'right' : 'left' }}>{msg.time}</div>
         </div>
       );
     }
-    if ((mediaType === 'file') && (msg.fileName || mediaUrl)) {
+    if ((msgMediaType === 'file') && (msg.fileName || msgMediaUrl)) {
       return (
         <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
           <div style={{ background: isOut ? 'rgba(8,145,178,0.15)' : (dm ? 'rgba(30,41,59,0.9)' : '#fff'), border: `1px solid ${border}`, borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -846,7 +843,9 @@ export default function WhatsAppPage() {
               <div style={{ fontSize: 13, fontWeight: 700, color: txt1 }}>{msg.fileName}</div>
               <div style={{ fontSize: 11, color: txt2 }}>ملف مرفق</div>
             </div>
-            <i className="fas fa-download" style={{ fontSize: 14, color: txt2, cursor: 'pointer', marginRight: 'auto' }} />
+            <a href={msgMediaUrl} download style={{ marginRight: 'auto' }}>
+              <i className="fas fa-download" style={{ fontSize: 14, color: txt2, cursor: 'pointer' }} />
+            </a>
           </div>
           <div style={{ fontSize: 11, color: txt3, marginTop: 3, textAlign: isOut ? 'right' : 'left' }}>{msg.time}</div>
         </div>
