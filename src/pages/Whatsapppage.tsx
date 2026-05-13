@@ -469,18 +469,26 @@ export default function WhatsAppPage() {
 
     try {
       // إرسال عبر Edge Function — تفك التشفير وترسل لميتا وتحفظ في Supabase
-      const { data, error } = await supabase.functions.invoke('whatsapp?action=send', {
-        body: {
-          to:         activeContact.phone,
-          message:    clean,
-          employeeId: employeeProfile?.employee_id,
-        },
-      });
+      const sendRes = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp?action=send`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            to:         activeContact.phone.replace(/^\+/, ''),
+            message:    clean,
+            employeeId: employeeProfile?.employee_id,
+          }),
+        }
+      );
+      const data = await sendRes.json();
 
-      if (error || data?.error) {
-        console.warn('Send failed:', error?.message || data?.error);
+      if (!sendRes.ok || data?.error) {
+        console.warn('Send failed:', data?.error);
         showToast('فشل الإرسال — تحقق من إعدادات API', 'error');
-        // أزل الرسالة المؤقتة
         setMessages(prev => ({
           ...prev,
           [activeContact.id]: (prev[activeContact.id] || []).filter(m => m.id !== tempId),
@@ -488,7 +496,6 @@ export default function WhatsAppPage() {
         return;
       }
 
-      // تحديث الـ ID الحقيقي بعد النجاح
       if (data?.waMessageId) {
         setMessages(prev => ({
           ...prev,
@@ -588,15 +595,25 @@ export default function WhatsAppPage() {
     setBulkProgress(10);
 
     try {
-      const { data, error } = await supabase.functions.invoke('whatsapp?action=bulk', {
-        body: {
-          numbers:      bulkParsed,
-          templateName: metaTemplateId.trim() || undefined,
-          languageCode: bulkCategory === 'MARKETING' ? 'ar' : 'en',
-          employeeId:   employeeProfile?.employee_id,
-          freeText:     !metaTemplateId.trim() ? bulkTemplate.trim() : undefined,
-        },
-      });
+      const bulkRes = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp?action=bulk`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            numbers:      bulkParsed.map(n => n.replace(/^\+/, '')),
+            templateName: metaTemplateId.trim() || undefined,
+            languageCode: bulkCategory === 'MARKETING' ? 'ar' : 'en',
+            employeeId:   employeeProfile?.employee_id,
+            freeText:     !metaTemplateId.trim() ? bulkTemplate.trim() : undefined,
+          }),
+        }
+      );
+      const data = await bulkRes.json();
+      const error = !bulkRes.ok ? data : null;
 
       setBulkProgress(100);
 
