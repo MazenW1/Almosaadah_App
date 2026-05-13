@@ -49,16 +49,26 @@ async function getConfig(supabase: ReturnType<typeof getSupabase>) {
   if (error || !data) throw new Error('لم يتم العثور على إعدادات API — أضفها من صفحة الإعدادات')
 
   const encKey = Deno.env.get('WA_ENCRYPTION_KEY') || ''
-  if (!encKey) throw new Error('مفتاح التشفير غير محدد')
 
+  // يدعم base64 بسيط وAES-GCM معاً
   const decrypt = async (enc: string): Promise<string> => {
-    const keyData   = new TextEncoder().encode(encKey.padEnd(32, '0').slice(0, 32))
-    const key       = await crypto.subtle.importKey('raw', keyData, 'AES-GCM', false, ['decrypt'])
-    const combined  = Uint8Array.from(atob(enc), c => c.charCodeAt(0))
-    const iv        = combined.slice(0, 12)
-    const cipher    = combined.slice(12)
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher)
-    return new TextDecoder().decode(decrypted)
+    if (!enc) return ''
+    // جرب AES-GCM أولاً إذا عندنا مفتاح
+    if (encKey) {
+      try {
+        const keyData   = new TextEncoder().encode(encKey.padEnd(32, '0').slice(0, 32))
+        const key       = await crypto.subtle.importKey('raw', keyData, 'AES-GCM', false, ['decrypt'])
+        const combined  = Uint8Array.from(atob(enc), c => c.charCodeAt(0))
+        const iv        = combined.slice(0, 12)
+        const cipher    = combined.slice(12)
+        const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher)
+        return new TextDecoder().decode(decrypted)
+      } catch {
+        // إذا فشل AES-GCM جرب base64 عادي
+      }
+    }
+    // base64 بسيط (btoa)
+    try { return atob(enc) } catch { return enc }
   }
 
   return {
@@ -110,7 +120,6 @@ serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
 
   const url      = new URL(req.url)
-  const action   = url.searchParams.get('action') // ?action=send | bulk | verify | webhook
   const supabase = getSupabase()
 
   try {
@@ -118,7 +127,7 @@ serve(async (req: Request) => {
     // ─────────────────────────────────────────────────────────
     //  1. WEBHOOK — GET (التحقق عند إعداد ميتا)
     // ─────────────────────────────────────────────────────────
-    if (req.method === 'GET' && (!action || action === 'webhook')) {
+    if (req.method === 'GET') {
       const mode      = url.searchParams.get('hub.mode')
       const token     = url.searchParams.get('hub.verify_token')
       const challenge = url.searchParams.get('hub.challenge')
@@ -131,23 +140,18 @@ serve(async (req: Request) => {
       return new Response('Forbidden', { status: 403, headers: CORS })
     }
 
-    // ─────────────────────────────────────────────────────────
-    //  2. WEBHOOK — POST (استقبال رسائل من ميتا)
-    //  ميتا ترسل للـ Function مباشرة — لا نحتاج userId هنا
-    //  نعرف الجمعية من waba_id الموجود في الـ payload
-    // ─────────────────────────────────────────────────────────
-    if (req.method === 'POST' && (!action || action === 'webhook')) {
-      // ميتا تحتاج 200 فوري
-      const body = await req.json().catch(() => ({}))
+    // قراءة الـ body أولاً
+    const body   = req.method === 'POST' ? await req.json().catch(() => ({})) : {}
+    // action يُقبل من URL params أو من body
+    const action = url.searchParams.get('action') || body.action || null
 
-      // معالجة في الخلفية بدون await
+    // ─────────────────────────────────────────────────────────
+    //  2. WEBHOOK — POST (استقبال رسائل من ميتا — بدون action)
+    // ─────────────────────────────────────────────────────────
+    if (req.method === 'POST' && !action) {
       handleWebhook(supabase, body).catch(e => console.error('[Webhook]', e.message))
-
       return new Response('OK', { status: 200, headers: CORS })
     }
-
-    // قراءة الـ body
-    const body = req.method === 'POST' ? await req.json() : {}
 
     // ─────────────────────────────────────────────────────────
     //  3. VERIFY — اختبار صحة الـ API Key

@@ -278,6 +278,9 @@ export default function WhatsAppPage() {
   const [showTemplatesPicker, setShowTemplatesPicker] = useState(false);
   const [templates,      setTemplates]     = useState<WaTemplate[]>(MOCK_TEMPLATES);
   const [searchQ,        setSearchQ]       = useState('');
+  const [typingContacts, setTypingContacts] = useState<Set<string>>(new Set());
+  const [editingName,    setEditingName]   = useState(false);
+  const [editNameVal,    setEditNameVal]   = useState('');
 
   /* Bulk Send State */
   const [bulkNumbers,    setBulkNumbers]   = useState('');
@@ -344,6 +347,9 @@ export default function WhatsAppPage() {
           text: m.body || '',
           time: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
           status: m.status || 'sent',
+          mediaType: m.message_type === 'image' ? 'image' : m.message_type === 'file' ? 'file' : undefined,
+          mediaUrl: m.media_url || undefined,
+          fileName: m.media_url ? m.media_url.split('/').pop() : undefined,
         };
         setMessages(prev => ({ ...prev, [phone]: [...(prev[phone] || []), newMsg] }));
         setContacts(prev => {
@@ -397,6 +403,9 @@ export default function WhatsAppPage() {
               text: m.body || '',
               time: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
               status: (m.status as any) || 'sent',
+              mediaType: m.message_type === 'image' ? 'image' : m.message_type === 'file' ? 'file' : undefined,
+              mediaUrl: m.media_url || undefined,
+              fileName: m.media_url ? m.media_url.split('/').pop() : undefined,
             };
 
             if (!messageMap[phone]) messageMap[phone] = [];
@@ -978,7 +987,36 @@ export default function WhatsAppPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 40, height: 40, borderRadius: '50%', background: activeContact.avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#fff' }}>{activeContact.avatar}</div>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: txt1 }}>{activeContact.name}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {editingName ? (
+                    <input
+                      autoFocus
+                      value={editNameVal}
+                      onChange={e => setEditNameVal(e.target.value)}
+                      onBlur={async () => {
+                        const newName = editNameVal.trim();
+                        if (newName && newName !== activeContact.name) {
+                          setContacts(prev => prev.map(c => c.id === activeContact.id ? { ...c, name: newName, avatar: newName.slice(0,2) } : c));
+                          setActiveContact(prev => prev ? { ...prev, name: newName, avatar: newName.slice(0,2) } : null);
+                          await supabase.from('messages').update({ contact_name: newName }).eq('phone_number', activeContact.phone);
+                          showToast('✅ تم حفظ الاسم', 'success');
+                        }
+                        setEditingName(false);
+                      }}
+                      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingName(false); }}
+                      style={{ fontSize: 15, fontWeight: 700, color: txt1, background: 'transparent', border: 'none', borderBottom: `2px solid #0891b2`, outline: 'none', fontFamily: "'Tajawal', sans-serif", minWidth: 120, direction: 'rtl' }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 15, fontWeight: 700, color: txt1 }}>{activeContact.name}</div>
+                  )}
+                  <button
+                    onClick={() => { setEditNameVal(activeContact.name); setEditingName(true); }}
+                    title="تعديل الاسم"
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: txt3, padding: 2 }}
+                  >
+                    <i className="fas fa-pen" style={{ fontSize: 10 }} />
+                  </button>
+                </div>
                 <div style={{ fontSize: 12, color: txt2, display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
                   <div style={{ width: 7, height: 7, borderRadius: '50%', background: activeContact.status === 'active' ? '#22c55e' : activeContact.status === 'pending' ? '#f59e0b' : '#64748b' }} />
                   {activeContact.status === 'active' ? 'نشط' : activeContact.status === 'pending' ? 'بانتظار رد' : 'مغلق'}
