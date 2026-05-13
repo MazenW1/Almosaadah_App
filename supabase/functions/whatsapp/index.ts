@@ -87,7 +87,7 @@ async function metaSend(phoneNumberId: string, token: string, payload: object) {
 //  Helper: حفظ رسالة في messages
 // ═══════════════════════════════════════════════════════════════
 async function saveMsg(supabase: ReturnType<typeof getSupabase>, msg: {
-  user_id: string; employee_id?: string; phone_number: string
+  employee_id?: string; phone_number: string
   contact_name?: string; direction: string; message_type?: string
   body?: string; media_url?: string; media_mime_type?: string
   template_name?: string; wa_message_id?: string; status?: string
@@ -146,11 +146,8 @@ serve(async (req: Request) => {
       return new Response('OK', { status: 200, headers: CORS })
     }
 
-    // باقي العمليات تحتاج userId
-    const body     = req.method === 'POST' ? await req.json() : {}
-    const userId   = body.userId || url.searchParams.get('userId')
-
-    if (!userId && action !== 'verify' && action !== 'save-config') return json({ error: 'userId مطلوب' }, 400)
+    // قراءة الـ body
+    const body = req.method === 'POST' ? await req.json() : {}
 
     // ─────────────────────────────────────────────────────────
     //  3. VERIFY — اختبار صحة الـ API Key
@@ -249,7 +246,7 @@ serve(async (req: Request) => {
       const waMessageId = result.messages?.[0]?.id
 
       const msgId = await saveMsg(supabase, {
-        user_id: userId, employee_id: employeeId,
+        employee_id: employeeId,
         phone_number: to, direction: 'outbound',
         body: message.trim(), wa_message_id: waMessageId,
       })
@@ -275,7 +272,7 @@ serve(async (req: Request) => {
       const waMessageId = result.messages?.[0]?.id
 
       await saveMsg(supabase, {
-        user_id: userId, employee_id: employeeId,
+        employee_id: employeeId,
         phone_number: to, direction: 'outbound',
         message_type: mediaType === 'document' ? 'file' : mediaType,
         body: caption, media_url: mediaUrl, wa_message_id: waMessageId,
@@ -298,7 +295,7 @@ serve(async (req: Request) => {
       const waMessageId = result.messages?.[0]?.id
 
       await saveMsg(supabase, {
-        user_id: userId, employee_id: employeeId,
+        employee_id: employeeId,
         phone_number: to, direction: 'outbound',
         message_type: 'location',
         body: JSON.stringify({ lat, lng, name }),
@@ -322,7 +319,7 @@ serve(async (req: Request) => {
       const waMessageId = result.messages?.[0]?.id
 
       await saveMsg(supabase, {
-        user_id: userId, employee_id: employeeId,
+        employee_id: employeeId,
         phone_number: to, direction: 'outbound',
         message_type: 'template', template_name: templateName,
         wa_message_id: waMessageId,
@@ -336,17 +333,19 @@ serve(async (req: Request) => {
     //  يُنشئ حملة ويُرسل بشكل تدريجي آمن
     // ─────────────────────────────────────────────────────────
     if (action === 'bulk') {
-      const { employeeId, numbers, templateName, languageCode = 'ar', components = [] } = body
-      if (!numbers?.length || !templateName) return json({ error: 'بيانات ناقصة' }, 400)
+      const { employeeId, numbers, templateName, languageCode = 'ar', components = [], freeText } = body
+      if (!numbers?.length) return json({ error: 'لا توجد أرقام' }, 400)
+      if (!templateName && !freeText) return json({ error: 'بيانات ناقصة' }, 400)
 
       // إنشاء سجل الحملة
       const { data: campaign, error: campErr } = await supabase
         .from('bulk_campaigns')
         .insert({
-          user_id: userId, employee_id: employeeId,
-          template_name: templateName,
-          template_body: JSON.stringify(components),
-          total_count: numbers.length, status: 'running',
+          employee_id:   employeeId,
+          template_name: templateName || 'free_text',
+          template_body: freeText || JSON.stringify(components),
+          total_count:   numbers.length,
+          status:        'running',
         })
         .select('id').single()
 
@@ -362,30 +361,45 @@ serve(async (req: Request) => {
 
         for (const number of numbers) {
           try {
-            const result = await metaSend(config.phone_number_id, config.api_token, {
-              to: number, type: 'template',
-              template: { name: templateName, language: { code: languageCode }, components },
-            })
+            let payload: any
+
+            if (freeText) {
+              // نص حر — يشتغل داخل نافذة 24 ساعة فقط
+              payload = { to: number, type: 'text', text: { body: freeText } }
+            } else {
+              // قالب معتمد
+              payload = { to: number, type: 'template', template: { name: templateName, language: { code: languageCode }, components } }
+            }
+
+            const result = await metaSend(config.phone_number_id, config.api_token, payload)
             const waMessageId = result.messages?.[0]?.id
 
             await saveMsg(supabase, {
-              user_id: userId, employee_id: employeeId,
-              phone_number: number, direction: 'outbound',
-              message_type: 'template', template_name: templateName,
-              wa_message_id: waMessageId, is_bulk: true, bulk_campaign_id: campaignId,
+              employee_id:     employeeId,
+              phone_number:    number,
+              direction:       'outbound',
+              message_type:    freeText ? 'text' : 'template',
+              template_name:   templateName,
+              body:            freeText,
+              wa_message_id:   waMessageId,
+              is_bulk:         true,
+              bulk_campaign_id: campaignId,
             })
             sent++
           } catch (e: any) {
             console.error(`[Bulk] فشل ${number}:`, e.message)
             await saveMsg(supabase, {
-              user_id: userId, employee_id: employeeId,
-              phone_number: number, direction: 'outbound',
-              message_type: 'template', template_name: templateName,
-              status: 'failed', is_bulk: true, bulk_campaign_id: campaignId,
+              employee_id:     employeeId,
+              phone_number:    number,
+              direction:       'outbound',
+              message_type:    freeText ? 'text' : 'template',
+              template_name:   templateName,
+              status:          'failed',
+              is_bulk:         true,
+              bulk_campaign_id: campaignId,
             })
             failed++
           }
-          // 15ms بين كل رسالة = ~65 رسالة/ثانية (أمان من Rate Limit)
           await new Promise(r => setTimeout(r, 15))
         }
 
@@ -418,16 +432,32 @@ async function handleWebhook(supabase: ReturnType<typeof getSupabase>, body: any
   for (const entry of body.entry || []) {
     const wabaId = entry.id
 
-    // نعرف الجمعية من waba_id — كل جمعية لها waba_id منفصل
+    // جلب api_token من config الموحد
     const { data: config } = await supabase
       .from('whatsapp_config')
-      .select('user_id, api_token')
-      .eq('waba_id', wabaId)
+      .select('api_token_enc')
+      .eq('config_key', 'main')
       .eq('is_active', true)
       .maybeSingle()
 
     if (!config) {
-      console.warn('[Webhook] waba_id غير معروف:', wabaId)
+      console.warn('[Webhook] لا يوجد config نشط')
+      continue
+    }
+
+    // فك تشفير الـ token
+    let apiToken = ''
+    try {
+      const encKey  = Deno.env.get('WA_ENCRYPTION_KEY') || ''
+      const keyData = new TextEncoder().encode(encKey.padEnd(32, '0').slice(0, 32))
+      const key     = await crypto.subtle.importKey('raw', keyData, 'AES-GCM', false, ['decrypt'])
+      const combined = Uint8Array.from(atob(config.api_token_enc), c => c.charCodeAt(0))
+      const iv      = combined.slice(0, 12)
+      const cipher  = combined.slice(12)
+      const dec     = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher)
+      apiToken      = new TextDecoder().decode(dec)
+    } catch (e) {
+      console.error('[Webhook] فشل فك التشفير:', e)
       continue
     }
 
@@ -461,10 +491,9 @@ async function handleWebhook(supabase: ReturnType<typeof getSupabase>, body: any
           const mediaObj = msg[msg.type]
           mediaMime      = mediaObj.mime_type
           msgBody        = mediaObj.caption || null
-          // جلب رابط الوسائط من Meta
           try {
             const r = await fetch(`${META_BASE}/${mediaObj.id}`, {
-              headers: { Authorization: `Bearer ${config.api_token}` },
+              headers: { Authorization: `Bearer ${apiToken}` },
             })
             const d = await r.json()
             mediaUrl = d.url || null
@@ -475,19 +504,18 @@ async function handleWebhook(supabase: ReturnType<typeof getSupabase>, body: any
         }
 
         await saveMsg(supabase, {
-          user_id:        config.user_id,   // ← مرتبط بالجمعية الصحيحة تلقائياً
-          phone_number:   from,
-          contact_name:   profileName,
-          direction:      'inbound',
-          message_type:   messageType,
-          body:           msgBody,
-          media_url:      mediaUrl,
+          phone_number:    from,
+          contact_name:    profileName,
+          direction:       'inbound',
+          message_type:    messageType,
+          body:            msgBody,
+          media_url:       mediaUrl,
           media_mime_type: mediaMime,
-          wa_message_id:  waMessageId,
-          status:         'sent',
+          wa_message_id:   waMessageId,
+          status:          'sent',
         })
 
-        console.log(`[Webhook] ✓ رسالة من ${from} → جمعية ${config.user_id}`)
+        console.log(`[Webhook] ✓ رسالة واردة من ${from}`)
       }
 
       // ── تحديث حالة الرسائل الصادرة ──
@@ -499,7 +527,6 @@ async function handleWebhook(supabase: ReturnType<typeof getSupabase>, body: any
           .from('messages')
           .update({ status, updated_at: new Date().toISOString() })
           .eq('wa_message_id', waId)
-          .eq('user_id', config.user_id)   // ← ضمان إضافي: نحدث رسائل الجمعية فقط
       }
     }
   }

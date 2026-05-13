@@ -343,11 +343,14 @@ export default function WhatsAppPage() {
         setContacts(prev => {
           const exists = prev.find(c => c.id === phone);
           if (exists) {
-            return prev.map(c => c.id === phone ? { ...c, lastMsg: m.body || '', lastTime: newMsg.time, unread: c.unread + (m.direction === 'inbound' ? 1 : 0) } : c);
+            return [
+              { ...exists, lastMsg: m.body || '', lastTime: newMsg.time, unread: exists.unread + (m.direction === 'inbound' ? 1 : 0) },
+              ...prev.filter(c => c.id !== phone)
+            ];
           }
           const name = m.contact_name || phone;
           const colors = ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'];
-          return [{ id: phone, name, phone, lastMsg: m.body || '', lastTime: newMsg.time, unread: 1, status: 'active', avatar: name.slice(0, 2), avatarBg: colors[phone.length % colors.length] }, ...prev];
+          return [{ id: phone, name, phone, lastMsg: m.body || '', lastTime: newMsg.time, unread: m.direction === 'inbound' ? 1 : 0, status: 'active', avatar: name.slice(0, 2), avatarBg: colors[phone.length % colors.length] }, ...prev];
         });
       })
       .subscribe();
@@ -436,7 +439,7 @@ export default function WhatsAppPage() {
       setConfigLoaded(true);
     };
     loadAll();
-  }, [isAdminOrEmployee, configLoaded]);
+  }, [isAdminOrEmployee, configLoaded]); // configLoaded يتحكم في إعادة التحميل
 
   /* ── Helpers ── */
   const currentMsgs = activeContact ? (messages[activeContact.id] || []) : [];
@@ -453,7 +456,7 @@ export default function WhatsAppPage() {
 
   const now = () => new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
 
-  /* ── Send Text — Meta Cloud API + Supabase ── */
+  /* ── Send Text — عبر Edge Function (التشفير في السيرفر) ── */
   const handleSend = async () => {
     if (!inputText.trim() || !activeContact) return;
     if (!sendRateLimiter.canProceed()) { showToast('أرسلت كثيراً، انتظر قليلاً', 'error'); return; }
@@ -468,50 +471,39 @@ export default function WhatsAppPage() {
     setShowTemplatesPicker(false);
 
     try {
-      // جيب credentials من Supabase
-      const { data: cfg } = await supabase
-        .from('whatsapp_config')
-        .select('api_token_enc, phone_number_id_enc')
-        .eq('config_key', 'main')
-        .maybeSingle();
+      // إرسال عبر Edge Function — تفك التشفير وترسل لميتا وتحفظ في Supabase
+      const { data, error } = await supabase.functions.invoke('whatsapp', {
+        body: {
+          action:     'send',
+          to:         activeContact.phone,
+          message:    clean,
+          employeeId: employeeProfile?.employee_id,
+        },
+      });
 
-      if (cfg?.api_token_enc && cfg?.phone_number_id_enc) {
-        const token   = atob(cfg.api_token_enc);
-        const phoneId = atob(cfg.phone_number_id_enc);
-        const to = activeContact.phone.replace(/^\+/, '');
+      if (error || data?.error) {
+        console.warn('Send failed:', error?.message || data?.error);
+        showToast('فشل الإرسال — تحقق من إعدادات API', 'error');
+        // أزل الرسالة المؤقتة
+        setMessages(prev => ({
+          ...prev,
+          [activeContact.id]: (prev[activeContact.id] || []).filter(m => m.id !== tempId),
+        }));
+        return;
+      }
 
-        const res = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: clean } }),
-        });
-        const json = await res.json();
-
-        if (res.ok && json.messages?.[0]?.id) {
-          const waId = json.messages[0].id;
-          // حفظ في Supabase
-          await supabase.from('messages').insert({
-            phone_number: activeContact.phone,
-            contact_name: activeContact.name,
-            direction: 'outbound',
-            message_type: 'text',
-            body: clean,
-            wa_message_id: waId,
-            status: 'sent',
-          });
-          // تحديث الـ ID الحقيقي
-          setMessages(prev => ({
-            ...prev,
-            [activeContact.id]: (prev[activeContact.id] || []).map(m =>
-              m.id === tempId ? { ...m, id: waId, status: 'delivered' } : m
-            ),
-          }));
-        } else {
-          console.warn('Send failed:', json.error?.message);
-        }
+      // تحديث الـ ID الحقيقي بعد النجاح
+      if (data?.waMessageId) {
+        setMessages(prev => ({
+          ...prev,
+          [activeContact.id]: (prev[activeContact.id] || []).map(m =>
+            m.id === tempId ? { ...m, id: data.waMessageId, status: 'sent' } : m
+          ),
+        }));
       }
     } catch (err) {
       console.error('Send error:', err);
+      showToast('خطأ في الإرسال', 'error');
     }
   };
 
@@ -590,95 +582,44 @@ export default function WhatsAppPage() {
     e.target.value = '';
   };
 
-  /* ── Bulk Send — Meta Cloud API ── */
+  /* ── Bulk Send — عبر Edge Function ── */
   const handleBulkSend = async () => {
     if (!bulkRateLimiter.canProceed()) { showToast('انتظر قبل إرسال حملة جديدة', 'error'); return; }
     if (bulkParsed.length === 0) { showToast('لا توجد أرقام صالحة', 'error'); return; }
-    if (!bulkTemplate.trim() && !metaTemplateId.trim()) { showToast('اكتب نص القالب أو أدخل Template ID', 'error'); return; }
-
-    // جيب بيانات API من Supabase
-    const { data: cfg } = await supabase
-      .from('whatsapp_config')
-      .select('api_token_enc, phone_number_id_enc')
-      .eq('config_key', 'main')
-      .maybeSingle();
-
-    if (!cfg?.api_token_enc || !cfg?.phone_number_id_enc) {
-      showToast('❌ لم يتم حفظ بيانات API — اذهب لتاب الحساب وأحفظها أولاً', 'error');
-      return;
-    }
-
-    const token   = atob(cfg.api_token_enc);
-    const phoneId = atob(cfg.phone_number_id_enc);
+    if (!bulkTemplate.trim() && !metaTemplateId.trim()) { showToast('اكتب نص القالب أو أدخل Template Name', 'error'); return; }
 
     setBulkSending(true);
-    setBulkProgress(0);
+    setBulkProgress(10);
 
-    let sent = 0, failed = 0;
+    try {
+      const { data, error } = await supabase.functions.invoke('whatsapp', {
+        body: {
+          action:       'bulk',
+          numbers:      bulkParsed,
+          templateName: metaTemplateId.trim() || 'custom',
+          languageCode: 'ar',
+          employeeId:   employeeProfile?.employee_id,
+          // إذا مافيه template ID نرسل نص حر
+          ...(metaTemplateId.trim() ? {} : { freeText: bulkTemplate.trim() }),
+        },
+      });
 
-    for (let i = 0; i < bulkParsed.length; i++) {
-      const to = bulkParsed[i].replace(/^\+/, '');
-      try {
-        // بناء الـ body حسب وجود Template ID أو نص حر
-        let msgBody: any;
-        if (metaTemplateId.trim()) {
-          // إرسال بـ Template ID
-          msgBody = {
-            messaging_product: 'whatsapp',
-            to,
-            type: 'template',
-            template: {
-              name: metaTemplateId.trim(), // Meta يقبل الاسم أو الـ ID
-              language: { code: 'ar' },
-            },
-          };
-        } else {
-          // إرسال نص حر (يشتغل فقط ضمن نافذة 24 ساعة)
-          msgBody = {
-            messaging_product: 'whatsapp',
-            to,
-            type: 'text',
-            text: { body: bulkTemplate.trim() },
-          };
-        }
+      setBulkProgress(100);
 
-        const res = await fetch(
-          `https://graph.facebook.com/v19.0/${phoneId}/messages`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(msgBody),
-          }
-        );
-        const json = await res.json();
-        if (!res.ok || json.error) {
-          console.warn('فشل الإرسال لـ', to, json.error?.message);
-          failed++;
-        } else {
-          sent++;
-        }
-      } catch {
-        failed++;
+      if (error || data?.error) {
+        showToast(data?.error || 'فشل إطلاق الحملة', 'error');
+      } else {
+        showToast(`✅ تم إطلاق الحملة — ${bulkParsed.length} رسالة قيد الإرسال`, 'success');
+        setBulkNumbers('');
+        setBulkTemplate('');
+        setMetaTemplateId('');
       }
-
-      setBulkProgress(Math.round(((i + 1) / bulkParsed.length) * 100));
-      // تأخير بسيط بين الرسائل لتجنب Rate Limit
-      if (i < bulkParsed.length - 1) await new Promise(r => setTimeout(r, 300));
+    } catch (err: any) {
+      showToast(err.message || 'خطأ في الإرسال', 'error');
+    } finally {
+      setBulkSending(false);
+      setBulkProgress(0);
     }
-
-    setBulkSending(false);
-    if (failed === 0) {
-      showToast(`✅ تم إرسال ${sent} رسالة بنجاح`, 'success');
-    } else {
-      showToast(`تم إرسال ${sent} ✅ وفشل ${failed} ❌`, 'error');
-    }
-    setBulkNumbers('');
-    setBulkTemplate('');
-    setMetaTemplateId('');
-    setBulkProgress(0);
   };
 
   /* ── Settings Save ── */

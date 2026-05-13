@@ -1,21 +1,12 @@
 import path from "path"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
-import sourceIdentifierPlugin from 'vite-plugin-source-identifier'
 
-const isProd = process.env.BUILD_MODE === 'prod'
 const isCapacitor = process.env.BUILD_TARGET === 'capacitor'
 
 export default defineConfig({
-base: isCapacitor ? './' : '/',
-  plugins: [
-    react(),
-    sourceIdentifierPlugin({
-      enabled: !isProd,
-      attributePrefix: 'data-matrix',
-      includeProps: true,
-    })
-  ],
+  base: isCapacitor ? './' : '/',
+  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -23,8 +14,28 @@ base: isCapacitor ? './' : '/',
     preserveSymlinks: true,
   },
   server: {
-    fs: {
-      strict: false,
+    fs: { strict: false },
+  },
+  optimizeDeps: {
+    include: [
+      'react-router-dom',
+      'react-router',
+      '@remix-run/router',
+      '@supabase/supabase-js',
+      '@supabase/functions-js',
+      '@supabase/postgrest-js',
+      '@supabase/realtime-js',
+      '@supabase/storage-js',
+      '@supabase/auth-js',
+    ],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true,
+    },
+    rollupOptions: {
+      external: [],
     },
   },
 })
