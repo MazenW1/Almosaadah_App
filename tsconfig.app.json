@@ -40,5 +40,5 @@
   },
   "include": [
     "src"
-  ]
+, "supabase/functions/cleanup-media/index.ts"  ]
 }

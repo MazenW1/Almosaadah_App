@@ -1,4 +1,5 @@
 import footerLogo from '../img/Logo.png';
+import { Link } from 'react-router-dom';
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
@@ -49,6 +50,35 @@ export function Footer() {
           flex-direction: column;
           align-items: center;
           gap: 14px;
+        }
+
+        .footer-legal-links {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          flex-wrap: wrap;
+          justify-content: center;
+          margin-top: 8px;
+        }
+
+        .footer-legal-link {
+          font-family: 'Tajawal', sans-serif;
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: #64748b;
+          text-decoration: none;
+          padding: 4px 12px;
+          border-radius: 8px;
+          border: 1px solid rgba(14, 165, 233, 0.1);
+          background: rgba(14, 165, 233, 0.03);
+          transition: all 0.25s ease;
+        }
+
+        .footer-legal-link:hover {
+          color: #0284c7;
+          background: rgba(14, 165, 233, 0.08);
+          border-color: rgba(14, 165, 233, 0.25);
+          transform: translateY(-1px);
         }
 
         .footer-logo-img {
@@ -264,6 +294,12 @@ export function Footer() {
               <span>المساعدة الإدارية</span>
               {' '}.. شراكة فاعلة … وأثر مستدام
             </p>
+            <div className="footer-legal-links">
+              <Link to="/privacy-policy" className="footer-legal-link">
+                <i className="fas fa-shield-alt" style={{ marginLeft: 6 }} />
+                سياسات وأحكام المنظمة
+              </Link>
+            </div>
           </div>
 
           {/* Cards column */}

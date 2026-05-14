@@ -325,6 +325,7 @@ export function Header({
           direction: rtl;
           will-change: transform;
           isolation: isolate;
+          box-sizing: border-box;
         }
 
         header.futuristic-header.scrolled {
@@ -383,13 +384,17 @@ export function Header({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          height: 40px;
+          min-height: 64px;
+          height: auto;
           gap: 16px;
+          box-sizing: border-box;
+          flex-wrap: nowrap;
         }
         @media (max-width: 480px) {
           .header-inner {
             padding: 0 14px;
             gap: 8px;
+            min-height: 58px;
           }
         }
 
@@ -399,6 +404,7 @@ export function Header({
           gap: 12px;
           text-decoration: none;
           position: relative;
+          flex-shrink: 0;
         }
 
         .logo-img-ring {
@@ -472,13 +478,15 @@ export function Header({
           border-radius: 100px;
           padding: 4px;
           backdrop-filter: blur(12px);
+          flex-shrink: 1;
+          min-width: 0;
         }
 
         .nav-pill-btn {
           display: flex;
           align-items: center;
           gap: 6px;
-          padding: 7px 14px;
+          padding: 7px 12px;
           border-radius: 100px;
           border: none;
           background: none;
@@ -489,6 +497,7 @@ export function Header({
           cursor: pointer;
           transition: all 0.25s ease;
           white-space: nowrap;
+          flex-shrink: 0;
         }
         .nav-pill-btn:hover {
           background: var(--sky-light);
@@ -501,13 +510,19 @@ export function Header({
         }
         .nav-pill-btn i { font-size: 0.72rem; }
 
-        @media (max-width: 1100px) { .header-nav-pill { display: none; } }
+        @media (max-width: 1200px) { .header-nav-pill { display: none; } }
+        @media (max-width: 1200px) { .dash-quick-btn { display: none; } }
+        @media (max-width: 1200px) { .btn-login { display: none; } }
+        @media (max-width: 1200px) { .btn-register { display: none; } }
+        @media (max-width: 1200px) { .user-avatar-btn { display: none; } }
+        @media (max-width: 1200px) { .mobile-menu-btn-new { display: flex; } }
 
         .header-actions {
           display: flex;
           align-items: center;
           gap: 10px;
           flex-shrink: 0;
+          flex-wrap: nowrap;
         }
 
         .dash-quick-btn {
@@ -526,7 +541,7 @@ export function Header({
           position: relative;
           overflow: hidden;
         }
-        @media (max-width: 1100px) { .dash-quick-btn { display: none; } }
+        
         .dash-quick-btn::before {
           content: '';
           position: absolute;
@@ -576,7 +591,7 @@ export function Header({
           background: var(--sky-light);
           transform: translateY(-1px);
         }
-        @media (max-width: 1100px) { .btn-login { display: none; } }
+        
 
         .btn-register {
           display: flex;
@@ -598,7 +613,7 @@ export function Header({
           transform: translateY(-2px) scale(1.05);
           box-shadow: 0 8px 24px var(--sky-glow);
         }
-        @media (max-width: 1100px) { .btn-register { display: none; } }
+        
 
         .user-avatar-btn {
           display: flex;
@@ -617,7 +632,7 @@ export function Header({
           box-shadow: 0 4px 16px var(--sky-glow);
           transform: translateY(-1px);
         }
-        @media (max-width: 1100px) { .user-avatar-btn { display: none; } }
+        
         .avatar-circle {
           width: 34px;
           height: 34px;
@@ -756,7 +771,7 @@ export function Header({
           background: var(--sky-light);
           border-color: var(--sky);
         }
-        @media (max-width: 1100px) { .mobile-menu-btn-new { display: flex; } }
+        
 
         .mobile-overlay {
           position: fixed;
@@ -898,7 +913,7 @@ export function Header({
           .floating-admin-btn span { display: none; }
         }
 
-        @media (max-width: 1100px) {
+        @media (max-width: 1200px) {
           .desktop-only-link { display: none !important; }
         }
 

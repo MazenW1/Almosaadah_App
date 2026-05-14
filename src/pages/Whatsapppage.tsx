@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { supabase } from '../lib/supabase';
+import { triggerEdgeCleanup } from '../lib/cleanup-media';
 
 /* ─────────────────────────────────────────
    Security Helpers
@@ -44,9 +45,10 @@ const bulkRateLimiter   = createRateLimiter(3,  60000,  'bulk-send');
 /* ─────────────────────────────────────────
    Types
 ───────────────────────────────────────── */
-type Tab = 'inbox' | 'bulk' | 'templates' | 'settings';
+type Tab = 'inbox' | 'bulk' | 'templates' | 'settings' | 'gallery';
 type InboxFilter = 'all' | 'unread' | 'pending' | 'closed';
 type MediaType = 'image' | 'file' | 'location';
+type MediaViewTab = 'all' | 'images' | 'videos' | 'files';
 
 interface WaContact {
   id: string;
@@ -65,11 +67,22 @@ interface WaMessage {
   from: 'agent' | 'contact';
   text: string;
   time: string;
+
   status?: 'sent' | 'delivered' | 'read';
+
   mediaType?: 'image' | 'file' | 'location';
   mediaUrl?: string;
   fileName?: string;
-  location?: { lat: number; lng: number; label: string };
+
+  employee_name?: string;
+  message_type?: string;
+  media_url?: string;
+
+  location?: {
+    lat: number;
+    lng: number;
+    label: string;
+  };
 }
 
 interface WaTemplate {
@@ -78,6 +91,18 @@ interface WaTemplate {
   text: string;
   category: string;
   approved: boolean;
+}
+
+interface WaMediaItem {
+  id: string;
+  phone: string;
+  contactName: string;
+  type: 'image' | 'video' | 'file';
+  url: string;
+  fileName: string;
+  caption?: string;
+  createdAt: string;
+  direction: 'inbound' | 'outbound';
 }
 
 /* ─────────────────────────────────────────
@@ -165,10 +190,10 @@ function SettingsTabComponent(props: SettingsTabProps) {
               <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'linear-gradient(135deg, #1e3a5f, #0891b2)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '3px solid rgba(8,145,178,0.4)', overflow: 'hidden' }}>
                 {profileAvatar ? <img src={profileAvatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 22, fontWeight: 700, color: '#fff' }}>م</span>}
               </div>
-              <button onClick={() => avatarInputRef.current?.click()} style={{ position: 'absolute', bottom: 0, left: 0, width: 24, height: 24, borderRadius: '50%', background: '#0891b2', border: '2px solid ' + card, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              <button aria-label="تغيير الصورة الشخصية" onClick={() => avatarInputRef.current?.click()} style={{ position: 'absolute', bottom: 0, left: 0, width: 24, height: 24, borderRadius: '50%', background: '#0891b2', border: '2px solid ' + card, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                 <i className="fas fa-camera" style={{ fontSize: 10, color: '#fff' }} />
               </button>
-              <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) setProfileAvatar(URL.createObjectURL(f)); }} />
+              <input ref={avatarInputRef} type="file" accept="image/*" aria-hidden="true" tabIndex={-1} style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) setProfileAvatar(URL.createObjectURL(f)); }} />
             </div>
             <div>
               <div style={{ fontSize: 14, fontWeight: 700, color: txt1 }}>{profileName}</div>
@@ -176,12 +201,12 @@ function SettingsTabComponent(props: SettingsTabProps) {
             </div>
           </div>
           <div style={{ marginBottom: 14 }}>
-            <label style={labelStyle}>اسم الحساب</label>
-            <input value={profileName} onChange={e => setProfileName(e.target.value)} placeholder="اسم الحساب على واتساب" style={{ ...fieldStyle, direction: 'rtl' }} />
+            <label htmlFor="profileNameInput" style={labelStyle}>اسم الحساب</label>
+            <input id="profileNameInput" value={profileName} onChange={e => setProfileName(e.target.value)} placeholder="اسم الحساب على واتساب" style={{ ...fieldStyle, direction: 'rtl' }} />
           </div>
           <div style={{ marginBottom: 14 }}>
-            <label style={labelStyle}>وصف الحساب</label>
-            <input value={profileAbout} onChange={e => setProfileAbout(e.target.value)} placeholder="نبذة عن الخدمة" style={{ ...fieldStyle, direction: 'rtl' }} />
+            <label htmlFor="profileAboutInput" style={labelStyle}>وصف الحساب</label>
+            <input id="profileAboutInput" value={profileAbout} onChange={e => setProfileAbout(e.target.value)} placeholder="نبذة عن الخدمة" style={{ ...fieldStyle, direction: 'rtl' }} />
           </div>
           <button onClick={handleSaveProfile} disabled={savingProfile} style={{ width: '100%', padding: '11px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #0891b2, #0e7490)', color: '#fff', fontFamily: "'Tajawal', sans-serif", fontSize: 14, fontWeight: 800, cursor: 'pointer', boxShadow: '0 4px 16px rgba(8,145,178,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             {savingProfile ? <><i className="fas fa-spinner fa-spin" /> جاري الحفظ...</> : <><i className="fas fa-save" /> حفظ معلومات الحساب</>}
@@ -205,13 +230,13 @@ function SettingsTabComponent(props: SettingsTabProps) {
           )}
 
           <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>
+            <label htmlFor="apiTokenInput" style={labelStyle}>
               Access Token (Permanent)
               <a href="https://developers.facebook.com/tools/accesstoken/" target="_blank" rel="noopener noreferrer" style={{ marginRight: 8, fontSize: 11, color: '#0891b2', fontWeight: 600 }}>كيف أحصل عليه؟ ↗</a>
             </label>
             <div style={{ position: 'relative' }}>
-              <input type={showToken ? 'text' : 'password'} value={apiToken} onChange={e => { setApiToken(e.target.value); setApiStatus('idle'); }} placeholder="EAAxxxxxxxxxxxxxxxx..." style={{ ...fieldStyle, paddingLeft: 44 }} autoComplete="off" spellCheck={false} />
-              <button onClick={() => setShowToken(p => !p)} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: txt3, padding: 4 }}>
+              <input id="apiTokenInput" type={showToken ? 'text' : 'password'} value={apiToken} onChange={e => { setApiToken(e.target.value); setApiStatus('idle'); }} placeholder="EAAxxxxxxxxxxxxxxxx..." title="Access Token لـ Meta WhatsApp API" aria-label="Access Token لـ Meta WhatsApp API" style={{ ...fieldStyle, paddingLeft: 44 }} autoComplete="off" spellCheck={false} />
+              <button aria-label={showToken ? 'إخفاء التوكن' : 'إظهار التوكن'} onClick={() => setShowToken(p => !p)} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: txt3, padding: 4 }}>
                 <i className={`fas ${showToken ? 'fa-eye-slash' : 'fa-eye'}`} style={{ fontSize: 15 }} />
               </button>
             </div>
@@ -219,21 +244,21 @@ function SettingsTabComponent(props: SettingsTabProps) {
           </div>
 
           <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>Phone Number ID</label>
-            <input type="text" value={phoneNumberId} onChange={e => { setPhoneNumberId(e.target.value.replace(/\D/g, '')); setApiStatus('idle'); }} placeholder="1234567890123456" style={fieldStyle} autoComplete="off" />
+            <label htmlFor="phoneNumberIdInput" style={labelStyle}>Phone Number ID</label>
+            <input id="phoneNumberIdInput" type="text" value={phoneNumberId} onChange={e => { setPhoneNumberId(e.target.value.replace(/\D/g, '')); setApiStatus('idle'); }} placeholder="1234567890123456" style={fieldStyle} autoComplete="off" />
             <div style={{ marginTop: 5, fontSize: 11, color: txt3 }}>تجده في: Meta Business → WhatsApp → API Setup → Phone Number ID</div>
           </div>
 
           <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>WhatsApp Business Account ID (WABA)</label>
-            <input type="text" value={wabaId} onChange={e => setWabaId(e.target.value.replace(/\D/g, ''))} placeholder="9876543210987654" style={fieldStyle} autoComplete="off" />
+            <label htmlFor="wabaIdInput" style={labelStyle}>WhatsApp Business Account ID (WABA)</label>
+            <input id="wabaIdInput" type="text" value={wabaId} onChange={e => setWabaId(e.target.value.replace(/\D/g, ''))} placeholder="9876543210987654" style={fieldStyle} autoComplete="off" />
           </div>
 
           <div style={{ marginBottom: 20 }}>
-            <label style={labelStyle}>Webhook Verify Token</label>
+            <label htmlFor="webhookSecretInput" style={labelStyle}>Webhook Verify Token</label>
             <div style={{ position: 'relative' }}>
-              <input type={showWebhook ? 'text' : 'password'} value={webhookSecret} onChange={e => setWebhookSecret(e.target.value)} placeholder="رمز سري تختاره أنت للـ Webhook" style={{ ...fieldStyle, paddingLeft: 44 }} autoComplete="off" />
-              <button onClick={() => setShowWebhook(p => !p)} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: txt3, padding: 4 }}>
+              <input id="webhookSecretInput" type={showWebhook ? 'text' : 'password'} value={webhookSecret} onChange={e => setWebhookSecret(e.target.value)} placeholder="رمز سري تختاره أنت للـ Webhook" title="Webhook Verify Token" aria-label="Webhook Verify Token" style={{ ...fieldStyle, paddingLeft: 44 }} autoComplete="off" />
+              <button aria-label={showWebhook ? 'إخفاء رمز Webhook' : 'إظهار رمز Webhook'} onClick={() => setShowWebhook(p => !p)} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: txt3, padding: 4 }}>
                 <i className={`fas ${showWebhook ? 'fa-eye-slash' : 'fa-eye'}`} style={{ fontSize: 15 }} />
               </button>
             </div>
@@ -260,10 +285,508 @@ function SettingsTabComponent(props: SettingsTabProps) {
   );
 }
 
+
+function GalleryTab({ tab, mediaItems, mediaViewTab, mediaLoading, mediaViewerOpen, mediaViewerIndex, dm, border, txt1, txt2, txt3, card, loadMediaGallery, setMediaViewTab, setMediaViewerOpen, setMediaViewerIndex, setMediaItems, supabase }: any) {
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectMode,  setSelectMode]  = useState(false);
+  const [deleting,    setDeleting]    = useState(false);
+
+  useEffect(() => {
+    if (tab === 'gallery' && mediaItems.length === 0) {
+      loadMediaGallery();
+    }
+  }, [tab]);
+
+  // إلغاء تحديد الكل عند تغيير الفلتر
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setSelectMode(false);
+  }, [mediaViewTab]);
+
+  const filteredMedia = mediaViewTab === 'all'
+    ? mediaItems
+    : mediaItems.filter((m: any) => {
+        if (mediaViewTab === 'images') return m.type === 'image';
+        if (mediaViewTab === 'videos') return m.type === 'video';
+        return m.type === 'file';
+      });
+
+  const openViewer = (index: number) => {
+    setMediaViewerIndex(index);
+    setMediaViewerOpen(true);
+  };
+
+  const prevMedia = () => setMediaViewerIndex((i: number) => (i - 1 + filteredMedia.length) % filteredMedia.length);
+  const nextMedia = () => setMediaViewerIndex((i: number) => (i + 1) % filteredMedia.length);
+
+  const formatDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
+  // تجميع الوسائط حسب التاريخ
+  const groupedMedia: Record<string, typeof filteredMedia> = {};
+  filteredMedia.forEach((item: any) => {
+    const dateKey = formatDate(item.createdAt);
+    if (!groupedMedia[dateKey]) groupedMedia[dateKey] = [];
+    groupedMedia[dateKey].push(item);
+  });
+
+  const handleDelete = async (item: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('هل تريد حذف هذه الوسيطة؟')) return;
+    try {
+      // حذف من Supabase Storage إذا كان من bucket whatsapp-media
+      const url = item.url || '';
+      const bucketPath = url.includes('/whatsapp-media/') ? url.split('/whatsapp-media/')[1]?.split('?')[0] : null;
+      if (bucketPath) {
+        await supabase.storage.from('whatsapp-media').remove([bucketPath]);
+      }
+      // حذف media_url من الرسالة في DB
+      await supabase.from('messages').update({ media_url: null }).eq('id', item.id);
+      // حذف من الـ UI
+      setMediaItems((prev: any[]) => prev.filter(m => m.id !== item.id));
+    } catch (err) {
+      console.error('Delete error:', err);
+    }
+  };
+
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === filteredMedia.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredMedia.map((m: any) => m.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`هل تريد حذف ${selectedIds.size} وسيطة؟`)) return;
+    setDeleting(true);
+    try {
+      const toDelete = filteredMedia.filter((m: any) => selectedIds.has(m.id));
+      for (const item of toDelete) {
+        const url = item.url || '';
+        const bucketPath = url.includes('/whatsapp-media/') ? url.split('/whatsapp-media/')[1]?.split('?')[0] : null;
+        if (bucketPath) await supabase.storage.from('whatsapp-media').remove([bucketPath]);
+        await supabase.from('messages').update({ media_url: null }).eq('id', item.id);
+      }
+      setMediaItems((prev: any[]) => prev.filter(m => !selectedIds.has(m.id)));
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch (err) {
+      console.error('Bulk delete error:', err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: txt1 }}>
+            <i className="fas fa-images" style={{ color: '#0891b2', marginLeft: 8 }} />
+            مستودع الوسائط
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* زر تحديد */}
+            <button onClick={() => { setSelectMode(p => !p); setSelectedIds(new Set()); }} style={{
+              padding: '6px 14px', borderRadius: 8,
+              border: `1px solid ${selectMode ? '#0891b2' : border}`,
+              background: selectMode ? 'rgba(8,145,178,0.1)' : 'transparent',
+              cursor: 'pointer', fontSize: 12,
+              color: selectMode ? '#0891b2' : txt2,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <i className="fas fa-check-square" style={{ fontSize: 11 }} />
+              {selectMode ? 'إلغاء التحديد' : 'تحديد'}
+            </button>
+            {/* زر حذف المحدد */}
+            {selectMode && selectedIds.size > 0 && (
+              <button onClick={handleBulkDelete} disabled={deleting} style={{
+                padding: '6px 14px', borderRadius: 8,
+                border: '1px solid #dc2626',
+                background: 'rgba(220,38,38,0.1)',
+                cursor: 'pointer', fontSize: 12, color: '#dc2626',
+                display: 'flex', alignItems: 'center', gap: 6,
+                fontWeight: 700,
+              }}>
+                {deleting
+                  ? <><i className="fas fa-spinner fa-spin" style={{ fontSize: 11 }} /> جاري الحذف...</>
+                  : <><i className="fas fa-trash" style={{ fontSize: 11 }} /> حذف ({selectedIds.size})</>
+                }
+              </button>
+            )}
+            {/* تحديد الكل */}
+            {selectMode && (
+              <button onClick={selectAll} style={{
+                padding: '6px 14px', borderRadius: 8,
+                border: `1px solid ${border}`,
+                background: 'transparent',
+                cursor: 'pointer', fontSize: 12, color: txt2,
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                {selectedIds.size === filteredMedia.length ? 'إلغاء الكل' : 'تحديد الكل'}
+              </button>
+            )}
+            <button onClick={loadMediaGallery} disabled={mediaLoading} style={{
+              padding: '6px 14px', borderRadius: 8, border: `1px solid ${border}`,
+              background: 'transparent', cursor: 'pointer', fontSize: 12, color: txt2,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <i className={`fas fa-sync-alt ${mediaLoading ? 'fa-spin' : ''}`} style={{ fontSize: 11 }} />
+              تحديث
+            </button>
+          </div>
+        </div>
+        {/* Filter Tabs */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {([
+            { id: 'all',    label: 'الكل',      icon: 'fa-th-large',  count: mediaItems.length },
+            { id: 'images', label: 'الصور',      icon: 'fa-image',     count: mediaItems.filter(m => m.type === 'image').length },
+            { id: 'videos', label: 'الفيديو',    icon: 'fa-video',     count: mediaItems.filter(m => m.type === 'video').length },
+            { id: 'files',  label: 'الملفات',     icon: 'fa-file',     count: mediaItems.filter(m => m.type === 'file').length },
+          ] as const).map(f => (
+            <button key={f.id} onClick={() => setMediaViewTab(f.id)} style={{
+              padding: '6px 14px', borderRadius: 20, border: 'none', cursor: 'pointer',
+              fontFamily: "'Tajawal', sans-serif", fontSize: 12, fontWeight: 700,
+              background: mediaViewTab === f.id ? '#0891b2' : (dm ? 'rgba(255,255,255,0.06)' : '#f1f5f9'),
+              color: mediaViewTab === f.id ? '#fff' : txt2,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <i className={`fas ${f.icon}`} style={{ fontSize: 11 }} />
+              {f.label}
+              <span style={{
+                background: mediaViewTab === f.id ? 'rgba(255,255,255,0.2)' : 'rgba(8,145,178,0.15)',
+                color: mediaViewTab === f.id ? '#fff' : '#0891b2',
+                borderRadius: 99, padding: '1px 7px', fontSize: 10,
+              }}>{f.count}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Media Grid */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+        {mediaLoading && mediaItems.length === 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: txt3 }}>
+            <i className="fas fa-spinner fa-spin" style={{ fontSize: 24 }} />
+            <span style={{ marginRight: 10 }}>جاري تحميل الوسائط...</span>
+          </div>
+        ) : filteredMedia.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px 20px', color: txt3 }}>
+            <i className="fas fa-images" style={{ fontSize: 48, opacity: 0.2, display: 'block', marginBottom: 12 }} />
+            <div style={{ fontSize: 14, fontWeight: 700 }}>لا توجد وسائط</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>ستظهر الصور والملفات هنا عند استلامها أو إرسالها</div>
+          </div>
+        ) : (
+          <div>
+            {Object.entries(groupedMedia).map(([dateKey, items]) => (
+              <div key={dateKey} style={{ marginBottom: 24 }}>
+                {/* تاريخ المجموعة */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  marginBottom: 10,
+                }}>
+                  <div style={{ flex: 1, height: 1, background: border }} />
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, color: txt3,
+                    background: dm ? 'rgba(15,23,42,0.8)' : '#f8fafc',
+                    padding: '3px 12px', borderRadius: 99,
+                    border: `1px solid ${border}`,
+                  }}>{dateKey}</span>
+                  <div style={{ flex: 1, height: 1, background: border }} />
+                </div>
+
+                {/* Grid للمجموعة */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+                  gap: 8,
+                }}>
+                  {(items as any[]).map((item: any) => {
+                    const globalIdx = filteredMedia.indexOf(item);
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => selectMode ? toggleSelect(item.id, { stopPropagation: () => {} } as any) : openViewer(globalIdx)}
+                        style={{
+                          position: 'relative', borderRadius: 12, overflow: 'hidden',
+                          cursor: 'pointer', aspectRatio: '1',
+                          background: dm ? 'rgba(30,41,59,0.5)' : '#f1f5f9',
+                          border: selectedIds.has(item.id) ? '2px solid #0891b2' : `1px solid ${border}`,
+                          transition: 'transform 0.15s, box-shadow 0.15s',
+                          boxShadow: selectedIds.has(item.id) ? '0 0 0 3px rgba(8,145,178,0.25)' : 'none',
+                        }}
+                        onMouseEnter={e => {
+                          if (!selectedIds.has(item.id)) {
+                            (e.currentTarget as HTMLDivElement).style.transform = 'scale(1.02)';
+                            (e.currentTarget as HTMLDivElement).style.boxShadow = '0 8px 24px rgba(0,0,0,0.2)';
+                          }
+                        }}
+                        onMouseLeave={e => {
+                          (e.currentTarget as HTMLDivElement).style.transform = 'scale(1)';
+                          if (!selectedIds.has(item.id)) (e.currentTarget as HTMLDivElement).style.boxShadow = 'none';
+                        }}
+                      >
+                        {item.type === 'image' ? (
+                          <img
+                            src={item.url}
+                            alt={item.caption || 'صورة'}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                            onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        ) : item.type === 'video' ? (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.3)' }}>
+                            <i className="fas fa-play-circle" style={{ fontSize: 36, color: '#fff' }} />
+                          </div>
+                        ) : (
+                          <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 8 }}>
+                            <i className="fas fa-file-alt" style={{ fontSize: 32, color: '#7c3aed' }} />
+                            <div style={{ fontSize: 10, color: txt2, textAlign: 'center', marginTop: 6, wordBreak: 'break-all', maxHeight: 40, overflow: 'hidden' }}>
+                              {item.fileName}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Checkbox */}
+                        <div
+                          onClick={e => { e.stopPropagation(); toggleSelect(item.id, e); }}
+                          style={{
+                            position: 'absolute', top: 7, right: 7, zIndex: 10,
+                            width: 22, height: 22, borderRadius: 6,
+                            background: selectedIds.has(item.id) ? '#0891b2' : 'rgba(0,0,0,0.4)',
+                            border: `2px solid ${selectedIds.has(item.id) ? '#0891b2' : 'rgba(255,255,255,0.75)'}`,
+                            display: selectMode || selectedIds.has(item.id) ? 'flex' : 'none',
+                            alignItems: 'center', justifyContent: 'center',
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          {selectedIds.has(item.id) && <i className="fas fa-check" style={{ fontSize: 10, color: '#fff' }} />}
+                        </div>
+
+                        {/* Overlay — الاسم والنوع */}
+                        <div style={{
+                          position: 'absolute', bottom: 0, left: 0, right: 0,
+                          background: 'linear-gradient(transparent, rgba(0,0,0,0.75))',
+                          padding: '20px 8px 6px',
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        }}>
+                          <span style={{ fontSize: 10, color: '#fff' }}>{item.contactName.slice(0, 12)}</span>
+                          <span style={{
+                            fontSize: 9, color: '#fff', padding: '1px 6px', borderRadius: 4,
+                            background: item.direction === 'inbound' ? 'rgba(34,197,94,0.7)' : 'rgba(8,145,178,0.7)',
+                          }}>
+                            {item.direction === 'inbound' ? 'وارد' : 'صادر'}
+                          </span>
+                        </div>
+
+                        {/* زر حذف */}
+                        <button
+                          aria-label="حذف الوسيطة"
+                          onClick={e => handleDelete(item, e)}
+                          title="حذف"
+                          style={{
+                            position: 'absolute', top: 6, left: 6,
+                            width: 26, height: 26, borderRadius: '50%',
+                            background: 'rgba(220,38,38,0.85)', border: 'none',
+                            cursor: 'pointer', color: '#fff', fontSize: 11,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            opacity: 0, transition: 'opacity 0.15s',
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                          onMouseLeave={e => (e.currentTarget.style.opacity = '0')}
+                        >
+                          <i className="fas fa-trash" />
+                        </button>
+
+                        {item.type === 'video' && (
+                          <div style={{ position: 'absolute', top: 6, right: 6 }}>
+                            <i className="fas fa-video" style={{ fontSize: 14, color: '#fff' }} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* شريط الحذف السفلي */}
+      {selectMode && selectedIds.size > 0 && (
+        <div style={{
+          borderTop: `1px solid ${border}`, padding: '12px 18px', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: dm ? 'rgba(15,23,42,0.97)' : '#fff',
+        }}>
+          <span style={{ fontSize: 13, color: txt2, fontWeight: 700 }}>
+            تم تحديد {selectedIds.size} وسيطة
+          </span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setSelectedIds(new Set())} style={{
+              padding: '7px 16px', borderRadius: 8, border: `1px solid ${border}`,
+              background: 'transparent', cursor: 'pointer', fontSize: 13, color: txt2,
+            }}>إلغاء</button>
+            <button onClick={handleBulkDelete} disabled={deleting} style={{
+              padding: '7px 16px', borderRadius: 8, border: 'none',
+              background: '#dc2626', cursor: 'pointer', fontSize: 13, color: '#fff',
+              fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              {deleting
+                ? <><i className="fas fa-spinner fa-spin" /> جاري الحذف...</>
+                : <><i className="fas fa-trash" /> حذف ({selectedIds.size})</>}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Media Viewer Modal */}
+      {mediaViewerOpen && filteredMedia[mediaViewerIndex] && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.92)', zIndex: 1000,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={() => setMediaViewerOpen(false)}
+        >
+          {/* Close Button */}
+          <button
+            aria-label="إغلاق العارض"
+            onClick={() => setMediaViewerOpen(false)}
+            style={{
+              position: 'absolute', top: 16, right: 16,
+              width: 40, height: 40, borderRadius: '50%',
+              background: 'rgba(255,255,255,0.1)', border: 'none',
+              cursor: 'pointer', color: '#fff', fontSize: 18,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              zIndex: 10,
+            }}
+          >
+            <i className="fas fa-times" />
+          </button>
+
+          {/* Navigation */}
+          {filteredMedia.length > 1 && (
+            <>
+              <button aria-label="السابق" onClick={e => { e.stopPropagation(); prevMedia(); }} style={{
+                position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)',
+                width: 48, height: 48, borderRadius: '50%',
+                background: 'rgba(255,255,255,0.1)', border: 'none',
+                cursor: 'pointer', color: '#fff', fontSize: 20,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <i className="fas fa-chevron-right" />
+              </button>
+              <button aria-label="التالي" onClick={e => { e.stopPropagation(); nextMedia(); }} style={{
+                position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)',
+                width: 48, height: 48, borderRadius: '50%',
+                background: 'rgba(255,255,255,0.1)', border: 'none',
+                cursor: 'pointer', color: '#fff', fontSize: 20,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <i className="fas fa-chevron-left" />
+              </button>
+            </>
+          )}
+
+          {/* Media Content */}
+          <div onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', maxHeight: '80vh' }}>
+            {filteredMedia[mediaViewerIndex].type === 'image' ? (
+              <img
+                src={filteredMedia[mediaViewerIndex].url}
+                alt="صورة"
+                style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 12, display: 'block' }}
+              />
+            ) : filteredMedia[mediaViewerIndex].type === 'video' ? (
+              <video
+                src={filteredMedia[mediaViewerIndex].url}
+                controls
+                style={{ maxWidth: '100%', maxHeight: '80vh', borderRadius: 12 }}
+              />
+            ) : (
+              <div style={{ background: card, borderRadius: 16, padding: 32, textAlign: 'center', minWidth: 300 }}>
+                <i className="fas fa-file-alt" style={{ fontSize: 64, color: '#7c3aed', marginBottom: 16 }} />
+                <div style={{ fontSize: 16, fontWeight: 800, color: txt1, marginBottom: 8 }}>
+                  {filteredMedia[mediaViewerIndex].fileName}
+                </div>
+                <div style={{ fontSize: 13, color: txt2, marginBottom: 20 }}>
+                  {formatDate(filteredMedia[mediaViewerIndex].createdAt)}
+                </div>
+                <a
+                  href={filteredMedia[mediaViewerIndex].url}
+                  download={filteredMedia[mediaViewerIndex].fileName}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                    padding: '10px 24px', borderRadius: 12,
+                    background: 'linear-gradient(135deg, #7c3aed, #6d28d9)',
+                    color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
+                  }}
+                >
+                  <i className="fas fa-download" /> تحميل الملف
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Caption & Info */}
+          {filteredMedia[mediaViewerIndex].type !== 'file' && (
+            <div onClick={e => e.stopPropagation()} style={{ marginTop: 16, textAlign: 'center' }}>
+              {filteredMedia[mediaViewerIndex].caption && (
+                <div style={{ color: '#fff', fontSize: 14, marginBottom: 8 }}>{filteredMedia[mediaViewerIndex].caption}</div>
+              )}
+              <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
+                {filteredMedia[mediaViewerIndex].contactName} • {formatDate(filteredMedia[mediaViewerIndex].createdAt)}
+              </div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 4 }}>
+                {mediaViewerIndex + 1} من {filteredMedia.length}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+} // end GalleryTab
+
 export default function WhatsAppPage() {
   const navigate   = useNavigate();
   const { user, isAdmin, isEmployee, isAdminOrEmployee, employeeProfile } = useAuth();
   const { showToast }  = useToast();
+  const [isCleaning, setIsCleaning] = useState(false);
+
+  const handleManualCleanup = async () => {
+    if (!window.confirm('هل أنت متأكد من رغبتك في بدء تنظيف الوسائط منتهية الصلاحية الآن؟')) return;
+    
+    setIsCleaning(true);
+    try {
+      const result = await triggerEdgeCleanup(50); // تنظيف 50 ملف
+      if (result.success) {
+        showToast(result.message, "success");
+      } else {
+        showToast(result.error || "خطأ", "error");
+      }
+    } catch (error) {
+      showToast("فشل الاتصال بخادم التنظيف", "error");
+    } finally {
+      setIsCleaning(false);
+    }
+  };
   const { isDarkMode } = useDarkMode();
   const dm = isDarkMode;
 
@@ -281,6 +804,8 @@ export default function WhatsAppPage() {
   const [typingContacts, setTypingContacts] = useState<Set<string>>(new Set());
   const [editingName,    setEditingName]   = useState(false);
   const [editNameVal,    setEditNameVal]   = useState('');
+  // wa_contacts: phone → name
+  const [waContacts,     setWaContacts]    = useState<Record<string, string>>({});
 
   /* Bulk Send State */
   const [bulkNumbers,    setBulkNumbers]   = useState('');
@@ -313,9 +838,18 @@ export default function WhatsAppPage() {
   const [displayPhone,     setDisplayPhone]     = useState('');
   const [verifiedName,     setVerifiedName]     = useState('');
 
+  /* Media Gallery State */
+  const [mediaItems,       setMediaItems]       = useState<WaMediaItem[]>([]);
+  const [mediaViewTab,     setMediaViewTab]     = useState<MediaViewTab>('all');
+  const [mediaViewerOpen,  setMediaViewerOpen] = useState(false);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+  const [mediaLoading,     setMediaLoading]     = useState(false);
+  const [lastRefresh,      setLastRefresh]      = useState(Date.now());
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef   = useRef<HTMLInputElement>(null);
   const excelInputRef  = useRef<HTMLInputElement>(null);
+  const mediaPollingRef = useRef<number | null>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const prevMsgCount = useRef(0);
@@ -330,8 +864,105 @@ export default function WhatsAppPage() {
   // ── Realtime: استقبال رسائل جديدة ──
   useEffect(() => {
     if (!isAdminOrEmployee) return;
+
+    // ── Polling fallback: يضمن تحديث الرسائل حتى لو فشلت realtime ──
+    const startPolling = () => {
+      if (mediaPollingRef.current) {
+  clearInterval(mediaPollingRef.current);
+    }
+      mediaPollingRef.current = setInterval(async () => {
+        if (!configLoaded) return;
+        try {
+          const { data: newMsgs } = await supabase
+            .from('messages')
+            .select('*')
+            .gte('created_at', new Date(Date.now() - 60000).toISOString()) // آخر دقيقة
+            .not('message_type', 'eq', 'template');
+
+          if (newMsgs && newMsgs.length > 0) {
+            // تحديث المحادثات فقط (الرسائل الجديدة تُضاف بـ realtime)
+            const contactMap: Record<string, WaContact> = {};
+            newMsgs.forEach(m => {
+              const phone = m.phone_number;
+              const msgId = m.id;
+              const waMsg: WaMessage = {
+                id: msgId,
+                from: m.direction === 'inbound' ? 'contact' : 'agent',
+                text: m.body || '',
+                time: new Date(m.created_at).toLocaleTimeString(
+                  'ar-SA',
+                  {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  }
+                ),
+
+                status: (m.status as any) || 'sent',
+
+                mediaType:
+                  m.message_type === 'image'
+                    ? 'image'
+                    : m.message_type === 'file'
+                    ? 'file'
+                    : m.message_type === 'video'
+                    ? 'file'
+                    : m.message_type === 'audio'
+                    ? 'file'
+                    : undefined,
+
+                mediaUrl: m.media_url || undefined,
+
+                fileName: m.media_url
+                  ? m.media_url.split('/').pop()
+                  : undefined,
+
+                employee_name: m.employee_name || '',
+                message_type: m.message_type || '',
+                media_url: m.media_url || '',
+              };
+
+              // أضف للرسائل إذا ما كانت موجودة
+              setMessages(prev => {
+                const existing = prev[phone]?.find(x => x.id === msgId);
+                if (existing) return prev;
+                return { ...prev, [phone]: [...(prev[phone] || []), waMsg] };
+              });
+
+              if (!contactMap[phone]) {
+                const name = m.contact_name || phone;
+                contactMap[phone] = {
+                  id: phone, name, phone,
+                  lastMsg: m.body || '',
+                  lastTime: waMsg.time,
+                  unread: 1,
+                  status: 'active',
+                  avatar: name.slice(0, 2),
+                  avatarBg: ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'][phone.length % 5],
+                };
+              }
+            });
+
+            // أضف جهات اتصال جديدة
+            if (Object.keys(contactMap).length > 0) {
+              setContacts(prev => {
+                const existingPhones = new Set(prev.map(c => c.id));
+                const newContacts = Object.values(contactMap).filter(c => !existingPhones.has(c.id));
+                if (newContacts.length === 0) return prev;
+                return [...newContacts, ...prev];
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[Polling] Error:', err);
+        }
+      }, 3000); // كل 3 ثواني
+    };
+
+    startPolling();
+
+    // ── Supabase Realtime ──
     const channel = supabase
-      .channel('messages-realtime')
+      .channel('messages-realtime-v2')
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         const phone = payload?.phone;
         if (!phone) return;
@@ -341,30 +972,90 @@ export default function WhatsAppPage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
         const m = payload.new as any;
         const phone = m.phone_number;
-        const newMsg: WaMessage = {
-          id: m.id,
-          from: m.direction === 'inbound' ? 'contact' : 'agent',
-          text: m.body || '',
-          time: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
-          status: m.status || 'sent',
-          mediaType: m.message_type === 'image' ? 'image' : m.message_type === 'file' ? 'file' : undefined,
-          mediaUrl: m.media_url || undefined,
-          fileName: m.media_url ? m.media_url.split('/').pop() : undefined,
-        };
-        setMessages(prev => ({ ...prev, [phone]: [...(prev[phone] || []), newMsg] }));
+
+        // تجاهل الرسائل الصادرة — تُضاف يدوياً في handleSend/handleFileUpload
+        if (m.direction === 'outbound') {
+          // فقط حدّث حالة آخر رسالة في قائمة المحادثات
+          const newTime = new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+          setContacts(prev => prev.map(c => c.id === phone
+            ? { ...c, lastMsg: m.body || (m.media_url ? '📎 مرفق' : ''), lastTime: newTime }
+            : c
+          ));
+          return;
+        }
+
+        // تأكد إن الرسالة ما كانت موجودة بالفعل
+        setMessages(prev => {
+          const existing = prev[phone]?.find(x => x.id === m.id);
+          if (existing) return prev;
+
+          const newMsg: WaMessage = {
+  id: m.id,
+
+  from:
+    m.direction === 'inbound'
+      ? 'contact'
+      : 'agent',
+
+  text: m.body || '',
+
+  time: new Date(m.created_at)
+    .toLocaleTimeString('ar-SA', {
+      hour: '2-digit',
+      minute: '2-digit'
+    }),
+
+  status: m.status || 'sent',
+
+  mediaType:
+    m.message_type === 'image'
+      ? 'image'
+      : m.message_type === 'file'
+      ? 'file'
+      : m.message_type === 'video'
+      ? 'file'
+      : m.message_type === 'audio'
+      ? 'file'
+      : undefined,
+
+  mediaUrl: m.media_url || undefined,
+
+  fileName: m.media_url
+    ? m.media_url.split('/').pop()
+    : undefined,
+
+  employee_name: m.employee_name || '',
+  message_type: m.message_type || '',
+  media_url: m.media_url || '',
+};
+
+          const updated = { ...prev, [phone]: [...(prev[phone] || []), newMsg] };
+
+          // Scroll to bottom when new message arrives
+          setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+
+          return updated;
+        });
+
         setContacts(prev => {
           const exists = prev.find(c => c.id === phone);
+          const newTime = new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
           if (exists) {
-            return prev.map(c => c.id === phone ? { ...c, lastMsg: m.body || '', lastTime: newMsg.time, unread: c.unread + (m.direction === 'inbound' ? 1 : 0) } : c);
+            return prev.map(c => c.id === phone ? { ...c, lastMsg: m.body || '', lastTime: newTime, unread: c.unread + (m.direction === 'inbound' ? 1 : 0) } : c);
           }
-          const name = m.contact_name || phone;
+          const waName = waContacts[phone] || null;
+          const name   = waName || m.contact_name || phone;
           const colors = ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'];
-          return [{ id: phone, name, phone, lastMsg: m.body || '', lastTime: newMsg.time, unread: 1, status: 'active', avatar: name.slice(0, 2), avatarBg: colors[phone.length % colors.length] }, ...prev];
+          return [{ id: phone, name, phone, lastMsg: m.body || '', lastTime: newTime, unread: 1, status: 'active', avatar: name.slice(0, 2), avatarBg: colors[phone.length % colors.length] }, ...prev];
         });
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [isAdminOrEmployee]);
+
+    return () => {
+      supabase.removeChannel(channel);
+      if (mediaPollingRef.current) clearInterval(mediaPollingRef.current);
+    };
+  }, [isAdminOrEmployee, configLoaded]);
 
   // ── تحميل البيانات عند فتح الصفحة ──
   useEffect(() => {
@@ -390,51 +1081,83 @@ export default function WhatsAppPage() {
           .order('created_at', { ascending: false });
 
         if (msgs && msgs.length > 0) {
-          // بناء قائمة المحادثات من آخر رسالة لكل رقم
           const contactMap: Record<string, WaContact> = {};
           const messageMap: Record<string, WaMessage[]> = {};
+          // نحتاج نتتبع آخر timestamp لكل محادثة لترتيب القائمة
+          const lastTimeMap: Record<string, number> = {};
+          const colors = ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'];
 
+          // msgs مرتبة descending — أول رسالة لكل phone هي الأحدث
           msgs.forEach(m => {
             const phone = m.phone_number;
-            const msgId = m.id;
+            const ts = new Date(m.created_at).getTime();
             const waMsg: WaMessage = {
-              id: msgId,
+              id: m.id,
               from: m.direction === 'inbound' ? 'contact' : 'agent',
               text: m.body || '',
               time: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
               status: (m.status as any) || 'sent',
-              mediaType: m.message_type === 'image' ? 'image' : m.message_type === 'file' ? 'file' : undefined,
+              mediaType: ['image'].includes(m.message_type) ? 'image'
+                : ['file','document','video','audio'].includes(m.message_type) ? 'file'
+                : undefined,
               mediaUrl: m.media_url || undefined,
-              fileName: m.media_url ? m.media_url.split('/').pop() : undefined,
-            };
+              fileName: m.media_url ? decodeURIComponent(m.media_url.split('/').pop() || '') : undefined,
+              isVideo: m.message_type === 'video',
+            } as WaMessage;
 
             if (!messageMap[phone]) messageMap[phone] = [];
             messageMap[phone].push(waMsg);
 
+            // آخر timestamp لهذه المحادثة
+            if (!lastTimeMap[phone] || ts > lastTimeMap[phone]) {
+              lastTimeMap[phone] = ts;
+            }
+
             if (!contactMap[phone]) {
-              const name = m.contact_name || phone;
-              const initials = name.slice(0, 2);
-              const colors = ['#1e3a5f','#3a1c5f','#1a3a2f','#3a2a0f','#1c2a3a'];
+              // الأولوية: wa_contacts > contact_name > phone
+              const waName    = waContacts[phone] || null;
+              const savedName = m.contact_name && !/^\d+$/.test(m.contact_name) ? m.contact_name : null;
+              const name      = waName || savedName || phone;
               contactMap[phone] = {
                 id: phone,
                 name,
                 phone,
-                lastMsg: m.body || '',
+                lastMsg: m.body || (m.media_url ? '📎 مرفق' : ''),
                 lastTime: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
-                unread: m.direction === 'inbound' && m.status !== 'read' ? 1 : 0,
+                unread: 0,
                 status: 'active',
-                avatar: initials,
+                avatar: name.slice(0, 2),
                 avatarBg: colors[phone.length % colors.length],
               };
+            } else {
+              // لو لقينا اسم أفضل، حدّثه (wa_contacts له الأولوية)
+              const waName    = waContacts[phone] || null;
+              const savedName = m.contact_name && !/^\d+$/.test(m.contact_name) ? m.contact_name : null;
+              const bestName  = waName || savedName;
+              if (bestName && /^\d+$/.test(contactMap[phone].name)) {
+                contactMap[phone].name   = bestName;
+                contactMap[phone].avatar = bestName.slice(0, 2);
+              }
             }
           });
 
-          // ترتيب رسائل كل محادثة تصاعدياً
+          // ترتيب رسائل كل محادثة تصاعدياً بالتاريخ الحقيقي
           Object.keys(messageMap).forEach(phone => {
-            messageMap[phone].sort((a, b) => a.time.localeCompare(b.time));
+            messageMap[phone].sort((a, b) =>
+              new Date('1970/01/01 ' + a.time).getTime() - new Date('1970/01/01 ' + b.time).getTime()
+            );
+            // آخر رسالة لكل محادثة
+            const last = messageMap[phone][messageMap[phone].length - 1];
+            contactMap[phone].lastMsg = last.text || (last.mediaUrl ? '📎 مرفق' : '');
+            contactMap[phone].lastTime = last.time;
           });
 
-          setContacts(Object.values(contactMap));
+          // ترتيب المحادثات بالأحدث أولاً
+          const sortedContacts = Object.values(contactMap).sort(
+            (a, b) => (lastTimeMap[b.id] || 0) - (lastTimeMap[a.id] || 0)
+          );
+
+          setContacts(sortedContacts);
           setMessages(messageMap);
         }
 
@@ -444,6 +1167,20 @@ export default function WhatsAppPage() {
           .select('template_name')
           .not('template_name', 'is', null)
           .limit(50);
+
+        // تحميل wa_contacts — الأسماء المحفوظة لكل رقم
+        const { data: waCons } = await supabase
+          .from('wa_contacts')
+          .select('phone, name');
+        if (waCons) {
+          const map: Record<string, string> = {};
+          waCons.forEach(c => { if (c.name) map[c.phone] = c.name; });
+          setWaContacts(map);
+          // حدّث أسماء المحادثات الموجودة
+          setContacts(prev => prev.map(c =>
+            map[c.phone] ? { ...c, name: map[c.phone], avatar: map[c.phone].slice(0, 2) } : c
+          ));
+        }
 
       } catch (err) {
         console.error('loadAll error:', err);
@@ -468,6 +1205,40 @@ export default function WhatsAppPage() {
 
   const now = () => new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
 
+  /* ── Load Media Gallery ── */
+  const loadMediaGallery = useCallback(async () => {
+    if (!isAdminOrEmployee) return;
+    setMediaLoading(true);
+    try {
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('id, phone_number, contact_name, message_type, media_url, body, created_at, direction')
+        .in('message_type', ['image', 'video', 'file', 'document', 'audio'])
+        .not('media_url', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(500);
+
+      if (msgs) {
+        const items: WaMediaItem[] = msgs.map(m => ({
+          id: m.id,
+          phone: m.phone_number,
+          contactName: m.contact_name || m.phone_number,
+          type: (m.message_type === 'image' ? 'image' : m.message_type === 'audio' ? 'file' : m.message_type === 'video' ? 'video' : 'file') as 'image' | 'video' | 'file',
+          url: m.media_url,
+          fileName: m.media_url.split('/').pop() || 'file',
+          caption: m.body || undefined,
+          createdAt: m.created_at,
+          direction: m.direction as 'inbound' | 'outbound',
+        }));
+        setMediaItems(items);
+      }
+    } catch (err) {
+      console.error('[MediaGallery] Error:', err);
+    } finally {
+      setMediaLoading(false);
+    }
+  }, [isAdminOrEmployee]);
+
   /* ── Send Text — عبر Edge Function (التشفير في السيرفر) ── */
   const handleSend = async () => {
     if (!inputText.trim() || !activeContact) return;
@@ -475,9 +1246,6 @@ export default function WhatsAppPage() {
     const clean = sanitizeInput(inputText);
 
     // أضف الرسالة للـ UI فوراً (Optimistic Update)
-    const tempId = 'temp_' + Date.now();
-    const msg: WaMessage = { id: tempId, from: 'agent', text: clean, time: now(), status: 'sent' };
-    setMessages(prev => ({ ...prev, [activeContact.id]: [...(prev[activeContact.id] || []), msg] }));
     setContacts(prev => prev.map(c => c.id === activeContact.id ? { ...c, lastMsg: clean, lastTime: now() } : c));
     setInputText('');
     setShowTemplatesPicker(false);
@@ -504,20 +1272,7 @@ export default function WhatsAppPage() {
       if (!sendRes.ok || data?.error) {
         console.warn('Send failed:', data?.error);
         showToast('فشل الإرسال — تحقق من إعدادات API', 'error');
-        setMessages(prev => ({
-          ...prev,
-          [activeContact.id]: (prev[activeContact.id] || []).filter(m => m.id !== tempId),
-        }));
         return;
-      }
-
-      if (data?.waMessageId) {
-        setMessages(prev => ({
-          ...prev,
-          [activeContact.id]: (prev[activeContact.id] || []).map(m =>
-            m.id === tempId ? { ...m, id: data.waMessageId, status: 'sent' } : m
-          ),
-        }));
       }
     } catch (err) {
       console.error('Send error:', err);
@@ -541,68 +1296,126 @@ export default function WhatsAppPage() {
     fileInputRef.current?.click();
   };
 
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activeContact) return;
-    const isImage = file.type.startsWith('image/');
-    const localUrl = URL.createObjectURL(file);
-    const tempId = 'temp_' + Date.now();
+  const handleFileUpload = async (
+  e: React.ChangeEvent<HTMLInputElement>
+) => {
+  const file = e.target.files?.[0];
 
-    // أضف للـ UI فوراً
-    const msg: WaMessage = {
-      id: tempId, from: 'agent', time: now(), status: 'sent',
-      text: '', mediaType: isImage ? 'image' : 'file',
-      mediaUrl: localUrl, fileName: file.name,
-    };
-    setMessages(prev => ({ ...prev, [activeContact.id]: [...(prev[activeContact.id] || []), msg] }));
-    e.target.value = '';
+  if (!file || !activeContact) return;
 
-    try {
-      // رفع الملف لـ Supabase Storage
-      const ext = file.name.split('.').pop();
-      const path = `whatsapp/${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from('media').upload(path, file);
-      if (upErr) throw new Error('فشل رفع الملف');
+  const isImage = file.type.startsWith('image/');
+  const localUrl = URL.createObjectURL(file);
+  const tempId = `temp_${Date.now()}`;
 
-      const { data: urlData } = supabase.storage.from('media').getPublicUrl(path);
-      const publicUrl = urlData.publicUrl;
+  // رسالة مؤقتة داخل الـ UI
+  const tempMessage: WaMessage = {
+    id: tempId,
+    from: 'agent',
+    time: now(),
+    status: 'sent',
 
-      // إرسال عبر Edge Function
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp?action=send-media`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
-          body: JSON.stringify({
-            to:        activeContact.phone.replace(/^\+/, ''),
-            mediaType: isImage ? 'image' : 'document',
-            mediaUrl:  publicUrl,
-            fileName:  file.name,
-            employeeId: employeeProfile?.employee_id,
-          }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok || data?.error) throw new Error(data?.error || 'فشل الإرسال');
+    text: '',
+    message_type: isImage ? 'image' : 'document',
 
-      // تحديث الـ ID
-      setMessages(prev => ({
-        ...prev,
-        [activeContact.id]: (prev[activeContact.id] || []).map(m =>
-          m.id === tempId ? { ...m, id: data.waMessageId || tempId, mediaUrl: publicUrl } : m
-        ),
-      }));
-    } catch (err: any) {
-      showToast(err.message || 'فشل إرسال الملف', 'error');
-      setMessages(prev => ({
-        ...prev,
-        [activeContact.id]: (prev[activeContact.id] || []).filter(m => m.id !== tempId),
-      }));
-    }
+    media_url: localUrl,
+    fileName: file.name,
+
+    employee_name:
+      employeeProfile?.employee_name ||
+      employeeProfile?.employee_name ||
+      'الموظف',
   };
+
+  // تحديث الرسائل مباشرة
+  setMessages(prev => ({
+    ...prev,
+    [activeContact.id]: [
+      ...(prev[activeContact.id] || []),
+      tempMessage,
+    ],
+  }));
+
+  e.target.value = '';
+
+  try {
+    // رفع الملف إلى Supabase Storage
+    const ext = file.name.split('.').pop();
+    const filePath = `whatsapp/${Date.now()}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('whatsapp-media')
+      .upload(filePath, file);
+
+    if (uploadError) {
+      throw new Error(uploadError.message);
+    }
+
+    // جلب الرابط العام
+    const { data: publicData } = supabase.storage
+      .from('whatsapp-media')
+      .getPublicUrl(filePath);
+
+    const publicUrl = publicData.publicUrl;
+
+    // إرسال عبر Edge Function
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp?action=send-media`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+
+        body: JSON.stringify({
+          to: activeContact.phone.replace(/^\+/, ''),
+
+          mediaType: isImage ? 'image' : 'document',
+
+          mediaUrl: publicUrl,
+
+          fileName: file.name,
+
+          employeeId: employeeProfile?.employee_id,
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || data?.error) {
+      throw new Error(data?.error || 'فشل إرسال الملف');
+    }
+
+    // حدّث الرسالة المؤقتة بالـ ID الحقيقي
+    setMessages(prev => ({
+      ...prev,
+      [activeContact.id]: (prev[activeContact.id] || []).map(msg =>
+        msg.id === tempId
+          ? { ...msg, id: data?.waMessageId || tempId, media_url: publicUrl, mediaUrl: publicUrl, status: 'delivered' }
+          : msg
+      ),
+    }));
+
+    showToast('✅ تم إرسال الملف', 'success');
+  } catch (err: any) {
+    console.error(err);
+
+    showToast(
+      err?.message || 'فشل إرسال الملف',
+      'error'
+    );
+
+    // حذف الرسالة المؤقتة عند الفشل
+    setMessages(prev => ({
+      ...prev,
+
+      [activeContact.id]: (
+        prev[activeContact.id] || []
+      ).filter(msg => msg.id !== tempId),
+    }));
+  }
+};
 
   /* ── Template Pick ── */
   const pickTemplate = (t: WaTemplate) => {
@@ -815,6 +1628,7 @@ export default function WhatsAppPage() {
   /* NAV SIDEBAR */
   const renderNavItem = (_id: Tab, _icon: string, _label: string) => (
     <button
+      aria-label={_label}
       onClick={() => setTab(_id)}
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
@@ -832,67 +1646,218 @@ export default function WhatsAppPage() {
 
   /* MESSAGE BUBBLE */
   const renderMsgBubble = (msg: WaMessage) => {
-    const isOut = msg.from === 'agent';
-    const msgMediaType = msg.mediaType;
-    const msgMediaUrl  = msg.mediaUrl;
-    if ((msgMediaType === 'image') && msgMediaUrl) {
-      return (
-        <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
-          <img src={msgMediaUrl} alt="صورة" style={{ borderRadius: 12, maxWidth: '100%', display: 'block', cursor: 'pointer' }} onClick={() => window.open(msgMediaUrl, '_blank')} />
-          <div style={{ fontSize: 11, color: txt3, marginTop: 3, textAlign: isOut ? 'right' : 'left' }}>{msg.time}</div>
-        </div>
-      );
-    }
-    if ((msgMediaType === 'file') && (msg.fileName || msgMediaUrl)) {
-      return (
-        <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
-          <div style={{ background: isOut ? 'rgba(8,145,178,0.15)' : (dm ? 'rgba(30,41,59,0.9)' : '#fff'), border: `1px solid ${border}`, borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <i className="fas fa-file" style={{ fontSize: 22, color: '#0891b2' }} />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: txt1 }}>{msg.fileName}</div>
-              <div style={{ fontSize: 11, color: txt2 }}>ملف مرفق</div>
-            </div>
-            <a href={msgMediaUrl} download style={{ marginRight: 'auto' }}>
-              <i className="fas fa-download" style={{ fontSize: 14, color: txt2, cursor: 'pointer' }} />
+  const isOut = msg.from === 'agent';
+
+  return (
+    <div
+      style={{
+        alignSelf: isOut ? 'flex-end' : 'flex-start',
+        maxWidth: '72%',
+      }}
+    >
+      <div
+        style={{
+          background: isOut
+            ? 'linear-gradient(135deg, rgba(8,145,178,0.22), rgba(8,145,178,0.12))'
+            : (dm
+                ? 'rgba(30,41,59,0.9)'
+                : '#fff'),
+
+          border: `1px solid ${
+            isOut
+              ? 'rgba(8,145,178,0.35)'
+              : border
+          }`,
+
+          borderRadius: isOut
+            ? '16px 4px 16px 16px'
+            : '4px 16px 16px 16px',
+
+          padding: '10px 14px',
+          fontSize: 14,
+          lineHeight: 1.6,
+          color: txt1,
+        }}
+      >
+        {/* اسم الموظف */}
+        {msg.employee_name && (
+          <div
+            style={{
+              fontSize: 11,
+              color: '#38bdf8',
+              marginBottom: 4,
+              fontWeight: 'bold',
+            }}
+          >
+            {msg.employee_name}
+          </div>
+        )}
+
+        {/* صورة */}
+        {msg.message_type === 'image' &&
+          msg.media_url && (
+            <img
+              src={msg.media_url}
+              alt="صورة"
+              onClick={() =>
+                window.open(msg.media_url, '_blank')
+              }
+              style={{
+                maxWidth: 240,
+                borderRadius: 12,
+                cursor: 'pointer',
+                display: 'block',
+              }}
+            />
+          )}
+
+        {/* فيديو */}
+        {msg.message_type === 'video' &&
+          msg.media_url && (
+            <video
+              controls
+              style={{
+                maxWidth: 240,
+                borderRadius: 12,
+              }}
+            >
+              <source src={msg.media_url} />
+            </video>
+          )}
+
+        {/* صوت */}
+        {msg.message_type === 'audio' &&
+          msg.media_url && (
+            <audio controls>
+              <source src={msg.media_url} />
+            </audio>
+          )}
+
+        {/* ملف */}
+        {msg.message_type === 'document' &&
+          msg.media_url && (
+            <a
+              href={msg.media_url}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                color: '#38bdf8',
+                textDecoration: 'underline',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <i className="fas fa-file" />
+              {msg.fileName || 'تحميل الملف'}
             </a>
-          </div>
-          <div style={{ fontSize: 11, color: txt3, marginTop: 3, textAlign: isOut ? 'right' : 'left' }}>{msg.time}</div>
-        </div>
-      );
-    }
-    if (msg.mediaType === 'location' && msg.location) {
-      return (
-        <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '65%' }}>
-          <div style={{ background: isOut ? 'rgba(8,145,178,0.15)' : (dm ? 'rgba(30,41,59,0.9)' : '#fff'), border: `1px solid ${border}`, borderRadius: 12, overflow: 'hidden', cursor: 'pointer' }}
-            onClick={() => window.open(`https://maps.google.com/?q=${msg.location!.lat},${msg.location!.lng}`, '_blank')}>
-            <div style={{ background: 'rgba(8,145,178,0.15)', height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <i className="fas fa-map-marker-alt" style={{ fontSize: 32, color: '#0891b2' }} />
+          )}
+
+        {/* موقع */}
+        {msg.message_type === 'location' &&
+          msg.location && (
+            <div
+              onClick={() =>
+                window.open(
+                  `https://maps.google.com/?q=${msg.location!.lat},${msg.location!.lng}`,
+                  '_blank'
+                )
+              }
+              style={{
+                cursor: 'pointer',
+              }}
+            >
+              <div
+                style={{
+                  background:
+                    'rgba(8,145,178,0.15)',
+                  height: 80,
+                  borderRadius: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 8,
+                }}
+              >
+                <i
+                  className="fas fa-map-marker-alt"
+                  style={{
+                    fontSize: 32,
+                    color: '#0891b2',
+                  }}
+                />
+              </div>
+
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                {msg.location?.label}
+              </div>
             </div>
-            <div style={{ padding: '8px 12px', fontSize: 13, fontWeight: 700, color: txt1 }}>{msg.location.label}</div>
-          </div>
-          <div style={{ fontSize: 11, color: txt3, marginTop: 3, textAlign: isOut ? 'right' : 'left' }}>{msg.time}</div>
-        </div>
-      );
-    }
-    return (
-      <div style={{ alignSelf: isOut ? 'flex-end' : 'flex-start', maxWidth: '72%' }}>
-        <div style={{
-          background: isOut ? 'linear-gradient(135deg, rgba(8,145,178,0.22), rgba(8,145,178,0.12))' : (dm ? 'rgba(30,41,59,0.9)' : '#fff'),
-          border: `1px solid ${isOut ? 'rgba(8,145,178,0.35)' : border}`,
-          borderRadius: isOut ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
-          padding: '10px 14px', fontSize: 14, lineHeight: 1.6, color: txt1,
-        }}>
-          {msg.text}
-        </div>
-        <div style={{ fontSize: 11, color: txt3, marginTop: 3, display: 'flex', alignItems: 'center', gap: 4, justifyContent: isOut ? 'flex-end' : 'flex-start' }}>
-          {msg.time}
-          {isOut && msg.status === 'read' && <i className="fas fa-check-double" style={{ color: '#0891b2', fontSize: 11 }} />}
-          {isOut && msg.status === 'delivered' && <i className="fas fa-check-double" style={{ color: txt3, fontSize: 11 }} />}
-          {isOut && msg.status === 'sent' && <i className="fas fa-check" style={{ color: txt3, fontSize: 11 }} />}
-        </div>
+          )}
+
+        {/* نص */}
+        {(!msg.message_type ||
+          msg.message_type === 'text') && (
+          <span>{msg.text}</span>
+        )}
       </div>
-    );
-  };
+
+      {/* الوقت والحالة */}
+      <div
+        style={{
+          fontSize: 11,
+          color: txt3,
+          marginTop: 3,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          justifyContent: isOut
+            ? 'flex-end'
+            : 'flex-start',
+        }}
+      >
+        {msg.time}
+
+        {isOut &&
+          msg.status === 'read' && (
+            <i
+              className="fas fa-check-double"
+              style={{
+                color: '#0891b2',
+                fontSize: 11,
+              }}
+            />
+          )}
+
+        {isOut &&
+          msg.status === 'delivered' && (
+            <i
+              className="fas fa-check-double"
+              style={{
+                color: txt3,
+                fontSize: 11,
+              }}
+            />
+          )}
+
+        {isOut &&
+          msg.status === 'sent' && (
+            <i
+              className="fas fa-check"
+              style={{
+                color: txt3,
+                fontSize: 11,
+              }}
+            />
+          )}
+      </div>
+    </div>
+  );
+};
 
   /* ── INBOX TAB ── */
   const renderInboxTab = () => (
@@ -906,6 +1871,7 @@ export default function WhatsAppPage() {
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, background: inputBg, border: `1px solid ${border}`, borderRadius: 12, padding: '7px 12px' }}>
               <i className="fas fa-search" style={{ color: txt3, fontSize: 13 }} />
               <input
+                aria-label="بحث في المحادثات"
                 value={searchQ} onChange={e => setSearchQ(e.target.value)}
                 placeholder="بحث في المحادثات..."
                 style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: txt1, fontFamily: "'Tajawal', sans-serif", width: '100%', direction: 'rtl' }}
@@ -990,16 +1956,31 @@ export default function WhatsAppPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   {editingName ? (
                     <input
+                      aria-label="تعديل اسم جهة الاتصال"
                       autoFocus
                       value={editNameVal}
                       onChange={e => setEditNameVal(e.target.value)}
                       onBlur={async () => {
                         const newName = editNameVal.trim();
                         if (newName && newName !== activeContact.name) {
+                          // حدّث الـ UI فوراً
                           setContacts(prev => prev.map(c => c.id === activeContact.id ? { ...c, name: newName, avatar: newName.slice(0,2) } : c));
                           setActiveContact(prev => prev ? { ...prev, name: newName, avatar: newName.slice(0,2) } : null);
-                          await supabase.from('messages').update({ contact_name: newName }).eq('phone_number', activeContact.phone);
-                          showToast('✅ تم حفظ الاسم', 'success');
+                          setWaContacts(prev => ({ ...prev, [activeContact.phone]: newName }));
+                          try {
+                            // 1) احفظ في wa_contacts (upsert بالرقم)
+                            await supabase.from('wa_contacts').upsert(
+                              { phone: activeContact.phone, name: newName },
+                              { onConflict: 'phone' }
+                            );
+                            // 2) حدّث contact_name في كل رسائل هذا الرقم
+                            await supabase.from('messages')
+                              .update({ contact_name: newName })
+                              .eq('phone_number', activeContact.phone);
+                            showToast('✅ تم حفظ الاسم', 'success');
+                          } catch (e) {
+                            showToast('فشل حفظ الاسم', 'error');
+                          }
                         }
                         setEditingName(false);
                       }}
@@ -1010,6 +1991,7 @@ export default function WhatsAppPage() {
                     <div style={{ fontSize: 15, fontWeight: 700, color: txt1 }}>{activeContact.name}</div>
                   )}
                   <button
+                    aria-label="تعديل الاسم"
                     onClick={() => { setEditNameVal(activeContact.name); setEditingName(true); }}
                     title="تعديل الاسم"
                     style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: txt3, padding: 2 }}
@@ -1074,7 +2056,7 @@ export default function WhatsAppPage() {
 
               {/* Media Button */}
               <div style={{ position: 'relative' }}>
-                <button onClick={() => setShowMediaMenu(p => !p)} style={{ width: 38, height: 38, borderRadius: '50%', border: `1px solid ${border}`, background: 'transparent', cursor: 'pointer', color: txt2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <button aria-label="إرفاق ملف أو وسائط" title="إرفاق" onClick={() => setShowMediaMenu(p => !p)} style={{ width: 38, height: 38, borderRadius: '50%', border: `1px solid ${border}`, background: 'transparent', cursor: 'pointer', color: txt2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <i className="fas fa-paperclip" style={{ fontSize: 16 }} />
                 </button>
                 {showMediaMenu && (
@@ -1096,23 +2078,40 @@ export default function WhatsAppPage() {
                 )}
               </div>
 
-              <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onChange={handleFileSelected} />
+              <input type="file" ref={fileInputRef} aria-hidden="true" tabIndex={-1} style={{ display: 'none' }} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onChange={handleFileUpload} />
+
 
               <textarea
+                aria-label="اكتب رسالتك هنا"
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
                 placeholder="اكتب ردك هنا... (Enter للإرسال)"
                 rows={1}
                 style={{
-                  flex: 1, border: `1px solid ${border}`, borderRadius: 14, padding: '10px 14px',
-                  fontSize: 14, fontFamily: "'Tajawal', sans-serif", background: inputBg, color: txt1,
-                  resize: 'none', outline: 'none', direction: 'rtl', lineHeight: 1.5,
-                  maxHeight: 100, overflowY: 'auto',
+                  flex: 1,
+                  border: `1px solid ${border}`,
+                  borderRadius: 14,
+                  padding: '10px 14px',
+                  fontSize: 14,
+                  fontFamily: "'Tajawal', sans-serif",
+                  background: inputBg,
+                  color: txt1,
+                  resize: 'none',
+                  outline: 'none',
+                  direction: 'rtl',
+                  lineHeight: 1.5,
+                  maxHeight: 100,
+                  overflowY: 'auto',
                 }}
               />
 
-              <button onClick={handleSend} disabled={!inputText.trim()} style={{
+              <button aria-label="إرسال الرسالة" title="إرسال" onClick={handleSend} disabled={!inputText.trim()} style={{
                 width: 40, height: 40, borderRadius: '50%',
                 background: inputText.trim() ? 'linear-gradient(135deg, #0891b2, #0e7490)' : (dm ? 'rgba(30,41,59,0.6)' : '#e2e8f0'),
                 border: 'none', cursor: inputText.trim() ? 'pointer' : 'default',
@@ -1146,7 +2145,7 @@ export default function WhatsAppPage() {
           </div>
 
           {/* Upload Excel */}
-          <input type="file" ref={excelInputRef} accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleExcelUpload} />
+          <input type="file" ref={excelInputRef} accept=".xlsx,.xls,.csv" aria-hidden="true" tabIndex={-1} style={{ display: 'none' }} onChange={handleExcelUpload} />
           <div
             onClick={() => excelInputRef.current?.click()}
             style={{ border: '2px dashed rgba(8,145,178,0.4)', borderRadius: 12, padding: '24px 16px', textAlign: 'center', cursor: 'pointer', background: dm ? 'rgba(8,145,178,0.05)' : 'rgba(8,145,178,0.03)', marginBottom: 14, transition: 'all 0.2s' }}
@@ -1161,6 +2160,7 @@ export default function WhatsAppPage() {
           <div style={{ textAlign: 'center', fontSize: 12, color: txt3, marginBottom: 12 }}>— أو —</div>
 
           <textarea
+            aria-label="أرقام الهواتف للإرسال الجماعي"
             value={bulkNumbers}
             onChange={e => setBulkNumbers(e.target.value)}
             placeholder={`الصق الأرقام هنا (رقم في كل سطر)\n+966501234567\n+966509876543`}
@@ -1245,6 +2245,8 @@ export default function WhatsAppPage() {
     /* تم حذف الـ replace لتسمح بدخول النصوص والأرقام */
     onChange={e => setMetaTemplateId(e.target.value)} 
     placeholder="أدخل معرف القالب هنا"
+    aria-label="Template ID من ميتا"
+    title="Template ID من ميتا"
     style={{ 
       width: '100%', 
       border: `1px solid ${border}`, 
@@ -1279,6 +2281,7 @@ export default function WhatsAppPage() {
           </div>
 
           <textarea
+            aria-label="نص قالب الرسالة الجماعية"
             value={bulkTemplate}
             onChange={e => setBulkTemplate(e.target.value)}
             placeholder="اكتب نص القالب هنا..."
@@ -1362,10 +2365,10 @@ export default function WhatsAppPage() {
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', cursor: 'pointer', color: txt2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <button aria-label={`تعديل قالب ${t.name}`} title="تعديل" style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', cursor: 'pointer', color: txt2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <i className="fas fa-edit" style={{ fontSize: 14 }} />
                   </button>
-                  <button style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid rgba(220,38,38,0.3)', background: 'rgba(220,38,38,0.06)', cursor: 'pointer', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <button aria-label={`حذف قالب ${t.name}`} title="حذف" style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid rgba(220,38,38,0.3)', background: 'rgba(220,38,38,0.06)', cursor: 'pointer', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <i className="fas fa-trash" style={{ fontSize: 14 }} />
                   </button>
                 </div>
@@ -1377,6 +2380,24 @@ export default function WhatsAppPage() {
       </div>
     </div>
   );
+
+  /* ── GALLERY TAB — مستودع الوسائط مثل الواتساب ── */
+  const renderGalleryTab = () => {
+    return <GalleryTab
+      tab={tab} mediaItems={mediaItems} mediaViewTab={mediaViewTab}
+      mediaLoading={mediaLoading} mediaViewerOpen={mediaViewerOpen}
+      mediaViewerIndex={mediaViewerIndex} dm={dm} border={border}
+      txt1={txt1} txt2={txt2} txt3={txt3} card={card}
+      loadMediaGallery={loadMediaGallery}
+      setMediaViewTab={setMediaViewTab}
+      setMediaViewerOpen={setMediaViewerOpen}
+      setMediaViewerIndex={setMediaViewerIndex}
+      setMediaItems={setMediaItems}
+      supabase={supabase}
+    />;
+  };
+
+  // ─── GalleryTab كـ Component حقيقي لتجنب مشكلة الـ hooks ───
 
   /* ── SETTINGS TAB ── */
   const renderSettingsTab = () => (
@@ -1460,6 +2481,7 @@ export default function WhatsAppPage() {
             {renderNavItem("inbox",     "fas fa-inbox",        "الرسائل")}
             {renderNavItem("bulk",      "fas fa-rocket",       "جماعي")}
             {renderNavItem("templates", "fas fa-layer-group",  "القوالب")}
+            {renderNavItem("gallery",   "fas fa-images",       "الوسائط")}
             {renderNavItem("settings",  "fas fa-sliders-h",    "الحساب")}
           </div>
 
@@ -1468,6 +2490,7 @@ export default function WhatsAppPage() {
             {tab === 'inbox'     && renderInboxTab()}
             {tab === 'bulk'      && renderBulkTab()}
             {tab === 'templates' && renderTemplatesTab()}
+            {tab === 'gallery'   && renderGalleryTab()}
             {tab === 'settings'  && renderSettingsTab()}
           </div>
         </div>

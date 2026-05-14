@@ -496,12 +496,51 @@ async function handleWebhook(supabase: ReturnType<typeof getSupabase>, body: any
           mediaMime      = mediaObj.mime_type
           msgBody        = mediaObj.caption || null
           try {
-            const r = await fetch(`${META_BASE}/${mediaObj.id}`, {
+            // 1) جلب رابط الميديا المؤقت من Meta
+            const metaRes  = await fetch(`${META_BASE}/${mediaObj.id}`, {
               headers: { Authorization: `Bearer ${apiToken}` },
             })
-            const d = await r.json()
-            mediaUrl = d.url || null
-          } catch {}
+            const metaData = await metaRes.json()
+            const tempUrl  = metaData.url
+
+            if (tempUrl) {
+              // 2) تحميل الملف الفعلي من Meta
+              const fileRes = await fetch(tempUrl, {
+                headers: { Authorization: `Bearer ${apiToken}` },
+              })
+
+              if (fileRes.ok) {
+                // 3) رفعه إلى Supabase Storage
+                const fileBuffer = await fileRes.arrayBuffer()
+                const ext        = (mediaMime || 'application/octet-stream').split('/')[1]?.split(';')[0] || 'bin'
+                const filePath   = `whatsapp/inbound/${Date.now()}_${mediaObj.id.slice(-8)}.${ext}`
+
+                const supabaseClient = getSupabase()
+                const { error: uploadErr } = await supabaseClient.storage
+                  .from('whatsapp-media')
+                  .upload(filePath, fileBuffer, {
+                    contentType:  mediaMime || 'application/octet-stream',
+                    cacheControl: '31536000',
+                    upsert:       false,
+                  })
+
+                if (!uploadErr) {
+                  // 4) جلب الرابط العام الدائم
+                  const { data: pubData } = supabaseClient.storage
+                    .from('whatsapp-media')
+                    .getPublicUrl(filePath)
+                  mediaUrl = pubData.publicUrl
+                } else {
+                  console.error('[Webhook] فشل رفع الملف:', uploadErr.message)
+                  mediaUrl = tempUrl // fallback للرابط المؤقت
+                }
+              } else {
+                mediaUrl = tempUrl // fallback
+              }
+            }
+          } catch (e: any) {
+            console.error('[Webhook] خطأ في معالجة الميديا:', e.message)
+          }
         } else if (msg.type === 'location') {
           msgBody     = JSON.stringify({ lat: msg.location.latitude, lng: msg.location.longitude })
           messageType = 'location'
