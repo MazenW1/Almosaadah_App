@@ -3,6 +3,7 @@
 //  WhatsApp Edge Function — يعمل داخل Supabase مباشرة
 //  يغطي: Webhook + Send + Bulk + Verify
 // ─────────────────────────────────────────────────────────────
+// deno-lint-ignore-file no-explicit-any
 
 import { serve }        from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -149,7 +150,7 @@ serve(async (req: Request) => {
     //  2. WEBHOOK — POST (استقبال رسائل من ميتا — بدون action)
     // ─────────────────────────────────────────────────────────
     if (req.method === 'POST' && !action) {
-      handleWebhook(supabase, body).catch(e => console.error('[Webhook]', e.message))
+      handleWebhook(supabase, body).catch(e => console.error('[Webhook]', (e as Error).message))
       return new Response('OK', { status: 200, headers: CORS })
     }
 
@@ -365,7 +366,7 @@ serve(async (req: Request) => {
 
         for (const number of numbers) {
           try {
-            let payload: any
+            let payload: Record<string, unknown>
 
             if (freeText) {
               // نص حر — يشتغل داخل نافذة 24 ساعة فقط
@@ -390,8 +391,8 @@ serve(async (req: Request) => {
               bulk_campaign_id: campaignId,
             })
             sent++
-          } catch (e: any) {
-            console.error(`[Bulk] فشل ${number}:`, e.message)
+          } catch (e: unknown) {
+            console.error(`[Bulk] فشل ${number}:`, (e as Error).message)
             await saveMsg(supabase, {
               employee_id:     employeeId,
               phone_number:    number,
@@ -420,9 +421,9 @@ serve(async (req: Request) => {
 
     return json({ error: 'action غير معروف' }, 400)
 
-  } catch (err: any) {
-    console.error('[WhatsApp Function]', err.message)
-    return json({ error: err.message }, 500)
+  } catch (err: unknown) {
+    console.error('[WhatsApp Function]', (err as Error).message)
+    return json({ error: (err as Error).message }, 500)
   }
 })
 
@@ -430,11 +431,13 @@ serve(async (req: Request) => {
 //  Webhook Handler — يعمل في الخلفية بعد إرجاع 200 لميتا
 //  الفصل مضمون: كل جمعية عندها waba_id مختلف في whatsapp_config
 // ═══════════════════════════════════════════════════════════════
+// deno-lint-ignore-file no-explicit-any
 async function handleWebhook(supabase: ReturnType<typeof getSupabase>, body: any) {
   if (body.object !== 'whatsapp_business_account') return
 
   for (const entry of body.entry || []) {
     const wabaId = entry.id
+    void wabaId // مستخدم للتعريف فقط
 
     // جلب api_token من config الموحد
     const { data: config } = await supabase
@@ -538,8 +541,8 @@ async function handleWebhook(supabase: ReturnType<typeof getSupabase>, body: any
                 mediaUrl = tempUrl // fallback
               }
             }
-          } catch (e: any) {
-            console.error('[Webhook] خطأ في معالجة الميديا:', e.message)
+          } catch (e: unknown) {
+            console.error('[Webhook] خطأ في معالجة الميديا:', (e as Error).message)
           }
         } else if (msg.type === 'location') {
           msgBody     = JSON.stringify({ lat: msg.location.latitude, lng: msg.location.longitude })

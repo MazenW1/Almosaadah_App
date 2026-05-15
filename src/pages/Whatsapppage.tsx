@@ -67,6 +67,7 @@ interface WaMessage {
   from: 'agent' | 'contact';
   text: string;
   time: string;
+  dateKey?: string; // YYYY-MM-DD للتجميع اليومي
 
   status?: 'sent' | 'delivered' | 'read';
 
@@ -861,6 +862,19 @@ export default function WhatsAppPage() {
     }
   }, [messages, activeContact]);
 
+  // ── إخفاء الهيدر العام للموقع لما المحادثة مفتوحة على الجوال ──
+  useEffect(() => {
+    const isMobile = window.innerWidth <= 767;
+    const chatOpen = !!activeContact && tab === 'inbox' && isMobile;
+    const header = document.querySelector('header') as HTMLElement | null;
+    if (header) {
+      header.style.display = chatOpen ? 'none' : '';
+    }
+    return () => {
+      if (header) header.style.display = '';
+    };
+  }, [activeContact, tab]);
+
   // ── Realtime: استقبال رسائل جديدة ──
   useEffect(() => {
     if (!isAdminOrEmployee) return;
@@ -889,13 +903,8 @@ export default function WhatsAppPage() {
                 id: msgId,
                 from: m.direction === 'inbound' ? 'contact' : 'agent',
                 text: m.body || '',
-                time: new Date(m.created_at).toLocaleTimeString(
-                  'ar-SA',
-                  {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  }
-                ),
+                time: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                dateKey: `${new Date(m.created_at).getFullYear()}-${String(new Date(m.created_at).getMonth()+1).padStart(2,'0')}-${String(new Date(m.created_at).getDate()).padStart(2,'0')}`,
 
                 status: (m.status as any) || 'sent',
 
@@ -976,7 +985,7 @@ export default function WhatsAppPage() {
         // تجاهل الرسائل الصادرة — تُضاف يدوياً في handleSend/handleFileUpload
         if (m.direction === 'outbound') {
           // فقط حدّث حالة آخر رسالة في قائمة المحادثات
-          const newTime = new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+          const newTime = new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
           setContacts(prev => prev.map(c => c.id === phone
             ? { ...c, lastMsg: m.body || (m.media_url ? '📎 مرفق' : ''), lastTime: newTime }
             : c
@@ -999,11 +1008,8 @@ export default function WhatsAppPage() {
 
   text: m.body || '',
 
-  time: new Date(m.created_at)
-    .toLocaleTimeString('ar-SA', {
-      hour: '2-digit',
-      minute: '2-digit'
-    }),
+  time: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                dateKey: `${new Date(m.created_at).getFullYear()}-${String(new Date(m.created_at).getMonth()+1).padStart(2,'0')}-${String(new Date(m.created_at).getDate()).padStart(2,'0')}`,
 
   status: m.status || 'sent',
 
@@ -1039,7 +1045,7 @@ export default function WhatsAppPage() {
 
         setContacts(prev => {
           const exists = prev.find(c => c.id === phone);
-          const newTime = new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+          const newTime = new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
           if (exists) {
             return prev.map(c => c.id === phone ? { ...c, lastMsg: m.body || '', lastTime: newTime, unread: c.unread + (m.direction === 'inbound' ? 1 : 0) } : c);
           }
@@ -1095,7 +1101,8 @@ export default function WhatsAppPage() {
               id: m.id,
               from: m.direction === 'inbound' ? 'contact' : 'agent',
               text: m.body || '',
-              time: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+              time: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                dateKey: `${new Date(m.created_at).getFullYear()}-${String(new Date(m.created_at).getMonth()+1).padStart(2,'0')}-${String(new Date(m.created_at).getDate()).padStart(2,'0')}`,
               status: (m.status as any) || 'sent',
               mediaType: ['image'].includes(m.message_type) ? 'image'
                 : ['file','document','video','audio'].includes(m.message_type) ? 'file'
@@ -1123,7 +1130,7 @@ export default function WhatsAppPage() {
                 name,
                 phone,
                 lastMsg: m.body || (m.media_url ? '📎 مرفق' : ''),
-                lastTime: new Date(m.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+                lastTime: new Date(m.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
                 unread: 0,
                 status: 'active',
                 avatar: name.slice(0, 2),
@@ -1203,7 +1210,23 @@ export default function WhatsAppPage() {
     return matchFilter && matchSearch;
   });
 
-  const now = () => new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+  const now = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  /* ── مساعد: يحوّل التاريخ لـ dateKey بصيغة YYYY-MM-DD ── */
+  const toDateKey = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  const todayKey     = useMemo(() => toDateKey(new Date()), []);
+  const yesterdayKey = useMemo(() => toDateKey(new Date(Date.now() - 86400000)), []);
+
+  /* ── تنسيق التاريخ كفاصل واتساب ── */
+  const formatDateSeparator = useCallback((key: string) => {
+    if (key === todayKey)     return 'اليوم';
+    if (key === yesterdayKey) return 'أمس';
+    const [y, mo, d] = key.split('-');
+    const months = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+    return `${parseInt(d)} ${months[parseInt(mo)-1]} ${y}`;
+  }, [todayKey, yesterdayKey]);
 
   /* ── Load Media Gallery ── */
   const loadMediaGallery = useCallback(async () => {
@@ -1286,7 +1309,9 @@ export default function WhatsAppPage() {
     if (type === 'location') {
       if (!activeContact) return;
       const msg: WaMessage = {
-        id: Date.now().toString(), from: 'agent', time: now(), status: 'sent',
+        id: Date.now().toString(), from: 'agent', time: now(),
+        dateKey: toDateKey(new Date()),
+        status: 'sent',
         text: '', mediaType: 'location',
         location: { lat: 21.3891, lng: 39.8579, label: 'جدة، المملكة العربية السعودية' },
       };
@@ -1312,6 +1337,7 @@ export default function WhatsAppPage() {
     id: tempId,
     from: 'agent',
     time: now(),
+    dateKey: toDateKey(new Date()),
     status: 'sent',
 
     text: '',
@@ -1471,43 +1497,64 @@ export default function WhatsAppPage() {
     setBulkSending(true);
     setBulkProgress(10);
 
-    try {
-      const bulkRes = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp?action=bulk`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
-          body: JSON.stringify({
-            numbers:      bulkParsed.map(n => n.replace(/^\+/, '')),
-            templateName: metaTemplateId.trim() || undefined,
-            languageCode: bulkCategory === 'MARKETING' ? 'ar' : 'en',
-            employeeId:   employeeProfile?.employee_id,
-            freeText:     !metaTemplateId.trim() ? bulkTemplate.trim() : undefined,
-          }),
+    // ── اللغات المجربة بالترتيب ──
+    const langsToTry = metaTemplateId.trim()
+      ? ['ar', 'en', 'en_US']
+      : [bulkCategory === 'MARKETING' ? 'ar' : 'en'];
+
+    let lastError: string | null = null;
+    let succeeded = false;
+
+    for (let i = 0; i < langsToTry.length; i++) {
+      const lang = langsToTry[i];
+      setBulkProgress(10 + Math.round((i / langsToTry.length) * 80));
+
+      try {
+        const bulkRes = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp?action=bulk`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            },
+            body: JSON.stringify({
+              numbers:      bulkParsed.map(n => n.replace(/^\+/, '')),
+              templateName: metaTemplateId.trim() || undefined,
+              languageCode: lang,
+              employeeId:   employeeProfile?.employee_id,
+              freeText:     !metaTemplateId.trim() ? bulkTemplate.trim() : undefined,
+            }),
+          }
+        );
+        const data = await bulkRes.json();
+
+        if (bulkRes.ok && !data?.error) {
+          // نجح
+          setBulkProgress(100);
+          showToast(`✅ تم إطلاق الحملة (${lang}) — ${bulkParsed.length} رسالة قيد الإرسال`, 'success');
+          setBulkNumbers('');
+          setBulkTemplate('');
+          setMetaTemplateId('');
+          succeeded = true;
+          break;
+        } else {
+          // فشل — جرب اللغة التالية
+          lastError = data?.error || `فشل بـ ${lang}`;
+          console.warn(`[BulkSend] lang=${lang} failed:`, lastError);
         }
-      );
-      const data = await bulkRes.json();
-      const error = !bulkRes.ok ? data : null;
-
-      setBulkProgress(100);
-
-      if (error || data?.error) {
-        showToast(data?.error || 'فشل إطلاق الحملة', 'error');
-      } else {
-        showToast(`✅ تم إطلاق الحملة — ${bulkParsed.length} رسالة قيد الإرسال`, 'success');
-        setBulkNumbers('');
-        setBulkTemplate('');
-        setMetaTemplateId('');
+      } catch (err: any) {
+        lastError = err.message || 'خطأ في الإرسال';
+        console.warn(`[BulkSend] lang=${lang} exception:`, lastError);
       }
-    } catch (err: any) {
-      showToast(err.message || 'خطأ في الإرسال', 'error');
-    } finally {
-      setBulkSending(false);
-      setBulkProgress(0);
     }
+
+    if (!succeeded) {
+      showToast(lastError || 'فشل إطلاق الحملة بكل اللغات', 'error');
+    }
+
+    setBulkSending(false);
+    setBulkProgress(0);
   };
 
   /* ── Settings Save ── */
@@ -1625,22 +1672,34 @@ export default function WhatsAppPage() {
      Render Helpers
   ───────────────────────────────────────── */
 
-  /* NAV SIDEBAR */
-  const renderNavItem = (_id: Tab, _icon: string, _label: string) => (
+  /* NAV SIDEBAR / BOTTOM BAR */
+  const renderNavItem = (_id: Tab, _icon: string, _label: string, isMobile = false) => (
     <button
       aria-label={_label}
       onClick={() => setTab(_id)}
       style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-        padding: '10px 0', border: 'none', background: 'transparent',
-        cursor: 'pointer', fontFamily: "'Tajawal', sans-serif", width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: isMobile ? 3 : 4,
+        padding: isMobile ? '8px 0' : '10px 0',
+        border: 'none',
+        background: isMobile
+          ? (tab === _id ? 'rgba(8,145,178,0.18)' : 'transparent')
+          : 'transparent',
+        cursor: 'pointer',
+        fontFamily: "'Tajawal', sans-serif",
+        width: isMobile ? 'auto' : '100%',
+        flex: isMobile ? 1 : undefined,
         color: tab === _id ? '#0891b2' : txt3,
-        borderRight: tab === _id ? '3px solid #0891b2' : '3px solid transparent',
+        borderRight: isMobile ? 'none' : (tab === _id ? '3px solid #0891b2' : '3px solid transparent'),
+        borderRadius: isMobile ? 14 : 0,
         transition: 'all 0.2s',
+        minWidth: isMobile ? 52 : undefined,
       }}
     >
-      <i className={_icon} style={{ fontSize: 20 }} />
-      <span style={{ fontSize: 11, fontWeight: tab === _id ? 700 : 500 }}>{_label}</span>
+      <i className={_icon} style={{ fontSize: isMobile ? 22 : 20 }} />
+      <span style={{ fontSize: isMobile ? 10 : 11, fontWeight: tab === _id ? 700 : 500 }}>{_label}</span>
     </button>
   );
 
@@ -1864,7 +1923,18 @@ export default function WhatsAppPage() {
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
 
       {/* Contacts List */}
-      <div style={{ width: 280, borderLeft: `1px solid ${border}`, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+      <div style={{ width: 280, borderLeft: `1px solid ${border}`, display: 'flex', flexDirection: 'column', flexShrink: 0 }}
+        className={activeContact ? 'wa-contacts-hide' : 'wa-contacts-show'}>
+        <style>{`
+          @media (max-width: 767px) {
+            .wa-contacts-hide { display: none !important; }
+            .wa-contacts-show { width: 100% !important; }
+            .wa-chat-hide { display: none !important; }
+            .wa-chat-show { display: flex !important; }
+            .wa-chat-back-btn { display: flex !important; }
+          }
+          .wa-chat-back-btn { display: none; }
+        `}</style>
         <div style={{ padding: '14px 12px 10px', borderBottom: `1px solid ${border}` }}>
           {/* Search + Refresh */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
@@ -1946,11 +2016,20 @@ export default function WhatsAppPage() {
 
       {/* Chat Area */}
       {activeContact ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className={activeContact ? 'wa-chat-show' : ''} style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
           {/* Chat Header */}
           <div style={{ padding: '12px 18px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* زر الرجوع — يظهر فقط على الجوال */}
+              <button
+                className="wa-chat-back-btn"
+                aria-label="رجوع للمحادثات"
+                onClick={() => setActiveContact(null)}
+                style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${border}`, background: 'transparent', cursor: 'pointer', color: txt2, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+              >
+                <i className="fas fa-arrow-right" style={{ fontSize: 14 }} />
+              </button>
               <div style={{ width: 40, height: 40, borderRadius: '50%', background: activeContact.avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: '#fff' }}>{activeContact.avatar}</div>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2036,7 +2115,33 @@ export default function WhatsAppPage() {
 
           {/* Messages */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, background: dm ? 'rgba(7,15,30,0.5)' : 'rgba(240,244,248,0.6)' }}>
-            {currentMsgs.map(msg => <div key={msg.id}>{renderMsgBubble(msg)}</div>)}
+            {(() => {
+              const items: React.ReactNode[] = [];
+              let lastDateKey = '';
+              currentMsgs.forEach(msg => {
+                const dk = msg.dateKey || todayKey;
+                if (dk !== lastDateKey) {
+                  lastDateKey = dk;
+                  items.push(
+                    <div key={`sep-${dk}`} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0' }}>
+                      <div style={{ flex: 1, height: 1, background: border }} />
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, color: txt3,
+                        background: dm ? 'rgba(15,23,42,0.85)' : 'rgba(240,244,248,0.95)',
+                        padding: '3px 14px', borderRadius: 99,
+                        border: `1px solid ${border}`,
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {formatDateSeparator(dk)}
+                      </span>
+                      <div style={{ flex: 1, height: 1, background: border }} />
+                    </div>
+                  );
+                }
+                items.push(<div key={msg.id}>{renderMsgBubble(msg)}</div>);
+              });
+              return items;
+            })()}
             {activeContact && typingContacts.has(activeContact.id) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ width: 28, height: 28, borderRadius: '50%', background: activeContact.avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#fff', fontWeight: 700, flexShrink: 0 }}>{activeContact.avatar}</div>
@@ -2425,7 +2530,7 @@ export default function WhatsAppPage() {
      Main Render
   ───────────────────────────────────────── */
   return (
-    <div style={{ minHeight: '100dvh', fontFamily: "'Tajawal', sans-serif", direction: 'rtl', background: bg, overflowX: 'hidden' }}>
+    <div className={activeContact && tab === 'inbox' ? 'wa-chat-is-open' : ''} style={{ minHeight: '100dvh', fontFamily: "'Tajawal', sans-serif", direction: 'rtl', background: bg, overflowX: 'hidden' }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
         @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
@@ -2438,11 +2543,120 @@ export default function WhatsAppPage() {
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(8,145,178,0.3); border-radius: 99px; }
+
+        /* ── Mobile Bottom Nav — Floating Glass Pill ── */
+        .wa-bottom-nav {
+          display: none;
+          position: fixed;
+          bottom: calc(14px + env(safe-area-inset-bottom));
+          left: 16px;
+          right: 16px;
+          z-index: 100;
+          /* الكبسولة العائمة */
+          background: ${dm ? 'rgba(15,23,42,0.82)' : 'rgba(255,255,255,0.82)'};
+          backdrop-filter: blur(20px) saturate(180%);
+          -webkit-backdrop-filter: blur(20px) saturate(180%);
+          border: 1px solid ${dm ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'};
+          border-radius: 999px;
+          box-shadow: 0 8px 32px ${dm ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.14)'};
+          flex-direction: row;
+          align-items: center;
+          justify-content: space-around;
+          padding: 6px 8px;
+          gap: 2px;
+        }
+        /* زر كل تاب */
+        .wa-nav-btn {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 3px;
+          flex: 1;
+          background: transparent;
+          border: none;
+          cursor: pointer;
+          font-family: 'Tajawal', sans-serif;
+          padding: 6px 4px;
+          border-radius: 999px;
+          transition: background 0.18s;
+          -webkit-tap-highlight-color: transparent;
+        }
+        /* الكبسولة (pill) خلف الأيقونة للعنصر النشط */
+        .wa-nav-pill {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 52px;
+          height: 30px;
+          border-radius: 999px;
+          transition: background 0.2s, box-shadow 0.2s;
+        }
+        .wa-nav-pill.active {
+          background: ${dm ? 'rgba(8,145,178,0.28)' : 'rgba(8,145,178,0.15)'};
+          box-shadow: 0 2px 10px rgba(8,145,178,0.25);
+        }
+        .wa-nav-icon {
+          font-size: 18px;
+          transition: color 0.2s;
+        }
+        .wa-nav-label {
+          font-size: 10px;
+          font-weight: 500;
+          transition: color 0.2s;
+          line-height: 1;
+        }
+
+        .wa-side-nav { display: flex; }
+        .wa-hero-mobile { display: none !important; }
+        .wa-hero-desktop { display: flex; }
+        .wa-main-wrap { padding: 0 24px 40px; }
+
+        @media (max-width: 767px) {
+          .wa-bottom-nav { display: flex; }
+          .wa-side-nav { display: none !important; }
+          .wa-hero-desktop { display: none !important; }
+          .wa-hero-mobile { display: flex !important; }
+          .wa-main-panel {
+            height: calc(100dvh - 110px) !important;
+            min-height: unset !important;
+            border-radius: 16px !important;
+          }
+          .wa-main-wrap {
+            padding: 0 10px calc(88px + env(safe-area-inset-bottom)) !important;
+          }
+          .wa-page-hero {
+            padding: 72px 14px 12px !important;
+          }
+
+          /* ── لما المحادثة مفتوحة: كل شي يختفي والشات يملأ الشاشة ── */
+          .wa-chat-is-open .wa-page-hero {
+            display: none !important;
+          }
+          .wa-chat-is-open .wa-main-wrap {
+            padding: 0 !important;
+          }
+          .wa-chat-is-open .wa-main-panel {
+            height: 100dvh !important;
+            border-radius: 0 !important;
+            border: none !important;
+          }
+          .wa-chat-is-open .wa-bottom-nav {
+            display: none !important;
+          }
+          /* إخفاء الهيدر العام للموقع */
+          .wa-chat-is-open ~ * header,
+          .wa-chat-is-open ~ header,
+          body:has(.wa-chat-is-open) header.futuristic-header,
+          body:has(.wa-chat-is-open) header {
+            display: none !important;
+          }
+        }
       `}</style>
 
-      {/* ── Hero ── */}
-      <div style={{ padding: '100px 24px 32px', position: 'relative', zIndex: 10,  }}>
-        <div style={{ maxWidth: 1300, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 24 }}>
+      {/* ── Hero Desktop ── */}
+      <div className="wa-page-hero" style={{ padding: '100px 24px 32px', position: 'relative', zIndex: 10 }}>
+        {/* Desktop hero */}
+        <div className="wa-hero-desktop" style={{ maxWidth: 1300, margin: '0 auto', alignItems: 'center', gap: 24 }}>
           <div style={{ flex: 1 }}>
             <div style={{ width: 64, height: 64, borderRadius: 20, background: dm ? 'linear-gradient(135deg,#1e3a5f,#0891b2)' : 'linear-gradient(135deg,#e0f2fe,#bae6fd)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, marginBottom: 14, boxShadow: dm ? '0 8px 32px rgba(8,145,178,0.4)' : '0 8px 32px rgba(8,145,178,0.2)' }}>
               <i className="fab fa-whatsapp" style={{ color: '#0891b2' }} />
@@ -2470,14 +2684,40 @@ export default function WhatsAppPage() {
             </div>
           </div>
         </div>
+
+        {/* Mobile hero — compact strip */}
+        <div className="wa-hero-mobile" style={{ maxWidth: 1300, margin: '0 auto', alignItems: 'center', gap: 12, justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 14, background: dm ? 'linear-gradient(135deg,#1e3a5f,#0891b2)' : 'linear-gradient(135deg,#e0f2fe,#bae6fd)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
+              <i className="fab fa-whatsapp" style={{ color: '#0891b2' }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: dm ? '#f1f5f9' : '#0f172a', lineHeight: 1.2 }}>واتساب</div>
+              <div style={{ fontSize: 11, color: dm ? '#94a3b8' : '#64748b' }}>منصة التواصل</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ padding: '7px 12px', borderRadius: 12, background: dm ? 'rgba(8,145,178,0.12)' : 'rgba(255,255,255,0.85)', border: `1px solid ${border}`, textAlign: 'center', backdropFilter: 'blur(12px)' }}>
+              <div style={{ fontSize: 18, fontWeight: 900, color: '#7c3aed', lineHeight: 1 }}>{contacts.reduce((a, c) => a + c.unread, 0)}</div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: dm ? '#94a3b8' : '#64748b', marginTop: 2 }}>غير مقروء</div>
+            </div>
+            <div style={{ padding: '7px 12px', borderRadius: 12, background: dm ? 'rgba(8,145,178,0.12)' : 'rgba(255,255,255,0.85)', border: `1px solid ${border}`, textAlign: 'center', backdropFilter: 'blur(12px)' }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: apiStatus === 'valid' ? '#22c55e' : '#94a3b8', lineHeight: 1 }}>
+                <i className="fas fa-circle" style={{ fontSize: 8, marginLeft: 3 }} />
+                {apiStatus === 'valid' ? 'متصل' : 'غير محدد'}
+              </div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: dm ? '#94a3b8' : '#64748b', marginTop: 2 }}>API</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ── Main Panel ── */}
-      <div style={{ maxWidth: 1300, margin: '0 auto', padding: '0 24px 40px',  }}>
-        <div style={{ background: card, border: `1px solid ${border}`, borderRadius: 20, overflow: 'hidden', display: 'flex', height: 'calc(100dvh - 260px)', minHeight: 500, boxShadow: dm ? '0 24px 80px rgba(0,0,0,0.4)' : '0 8px 48px rgba(8,145,178,0.1)' }}>
+      <div className="wa-main-wrap" style={{ maxWidth: 1300, margin: '0 auto', padding: '0 24px 40px' }}>
+        <div className="wa-main-panel" style={{ background: card, border: `1px solid ${border}`, borderRadius: 20, overflow: 'hidden', display: 'flex', height: 'calc(100dvh - 260px)', minHeight: 500, boxShadow: dm ? '0 24px 80px rgba(0,0,0,0.4)' : '0 8px 48px rgba(8,145,178,0.1)' }}>
 
-          {/* Vertical Nav */}
-          <div style={{ width: 72, borderLeft: `1px solid ${border}`, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 8, background: dm ? 'rgba(7,15,30,0.6)' : 'rgba(240,244,248,0.6)', flexShrink: 0 }}>
+          {/* Vertical Nav — desktop only */}
+          <div className="wa-side-nav" style={{ width: 72, borderLeft: `1px solid ${border}`, flexDirection: 'column', alignItems: 'center', paddingTop: 8, background: dm ? 'rgba(7,15,30,0.6)' : 'rgba(240,244,248,0.6)', flexShrink: 0 }}>
             {renderNavItem("inbox",     "fas fa-inbox",        "الرسائل")}
             {renderNavItem("bulk",      "fas fa-rocket",       "جماعي")}
             {renderNavItem("templates", "fas fa-layer-group",  "القوالب")}
@@ -2495,6 +2735,43 @@ export default function WhatsAppPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Mobile Bottom Nav — Material You True Black ── */}
+      <nav className="wa-bottom-nav" aria-label="التنقل الرئيسي">
+        {([
+          { id: 'inbox'     as Tab, icon: 'fas fa-inbox',       label: 'الرسائل' },
+          { id: 'bulk'      as Tab, icon: 'fas fa-rocket',      label: 'جماعي'   },
+          { id: 'templates' as Tab, icon: 'fas fa-layer-group', label: 'القوالب' },
+          { id: 'gallery'   as Tab, icon: 'fas fa-images',      label: 'الوسائط' },
+          { id: 'settings'  as Tab, icon: 'fas fa-sliders-h',   label: 'الحساب'  },
+        ] as const).map(item => {
+          const isActive = tab === item.id;
+          return (
+            <button
+              key={item.id}
+              className="wa-nav-btn"
+              aria-label={item.label}
+              onClick={() => setTab(item.id)}
+            >
+              <div className={`wa-nav-pill${isActive ? ' active' : ''}`}>
+                <i
+                  className={`${item.icon} wa-nav-icon`}
+                  style={{ color: isActive ? '#0891b2' : (dm ? 'rgba(148,163,184,0.8)' : 'rgba(71,85,105,0.7)') }}
+                />
+              </div>
+              <span
+                className="wa-nav-label"
+                style={{
+                  color: isActive ? '#0891b2' : (dm ? 'rgba(148,163,184,0.8)' : 'rgba(71,85,105,0.7)'),
+                  fontWeight: isActive ? 700 : 400,
+                }}
+              >
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
