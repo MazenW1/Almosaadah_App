@@ -2625,7 +2625,7 @@ export default function WhatsAppPage() {
             padding: 0 10px calc(88px + env(safe-area-inset-bottom)) !important;
           }
           .wa-page-hero {
-            padding: 72px 14px 12px !important;
+            padding: 100px 14px 12px !important;
           }
 
           /* ── لما المحادثة مفتوحة: كل شي يختفي والشات يملأ الشاشة ── */
@@ -2654,7 +2654,7 @@ export default function WhatsAppPage() {
       `}</style>
 
       {/* ── Hero Desktop ── */}
-      <div className="wa-page-hero" style={{ padding: '100px 24px 32px', position: 'relative', zIndex: 10 }}>
+      <div className="wa-page-hero" style={{ padding: '80px 24px 24px', position: 'relative', zIndex: 10 }}>
         {/* Desktop hero */}
         <div className="wa-hero-desktop" style={{ maxWidth: 1300, margin: '0 auto', alignItems: 'center', gap: 24 }}>
           <div style={{ flex: 1 }}>

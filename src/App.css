@@ -2,6 +2,37 @@
   margin: 0 auto;
 }
 
+/* ── تثبيت الـ body لما المودال مفتوح ── */
+body.modal-open {
+  position: fixed;
+  width: 100%;
+  overflow-y: scroll;
+}
+
+/* ── تثبيت الـ modal overlay على الجوال ── */
+.modal-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  /* منع الـ viewport من التحرك مع لوحة المفاتيح */
+  height: 100dvh !important;
+  max-height: -webkit-fill-available !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+@supports (-webkit-touch-callout: none) {
+  /* iOS فقط */
+  .modal-overlay {
+    height: -webkit-fill-available !important;
+  }
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;

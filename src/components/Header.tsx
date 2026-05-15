@@ -326,6 +326,7 @@ export function Header({
           will-change: transform;
           isolation: isolate;
           box-sizing: border-box;
+          overflow: visible;
         }
 
         header.futuristic-header.scrolled {
@@ -392,9 +393,10 @@ export function Header({
         }
         @media (max-width: 480px) {
           .header-inner {
-            padding: 0 14px;
+            padding: 0 12px 0 16px;
             gap: 8px;
             min-height: 58px;
+            overflow: visible;
           }
         }
 
@@ -516,6 +518,38 @@ export function Header({
         @media (max-width: 1200px) { .btn-register { display: none; } }
         @media (max-width: 1200px) { .user-avatar-btn { display: none; } }
         @media (max-width: 1200px) { .mobile-menu-btn-new { display: flex; } }
+        @media (max-width: 768px)  { .header-clock { display: none !important; } }
+        @media (max-width: 768px) { .btn-login         { display: none !important; } }
+        @media (max-width: 768px) { .btn-register       { display: none !important; } }
+        @media (max-width: 768px) { .desktop-only-link  { display: none !important; } }
+        @media (max-width: 768px) { .dark-mode-toggle-btn { display: none !important; } }
+        @media (max-width: 768px) { .header-clock       { display: none !important; } }
+        @media (max-width: 768px) { .dash-quick-btn     { display: none !important; } }
+        @media (max-width: 768px) { .user-avatar-btn    { display: none !important; } }
+        @media (max-width: 768px) { .header-nav-pill    { display: none !important; } }
+        @media (max-width: 768px) { .wa-icon-btn        { display: none !important; } }
+        @media (max-width: 768px) { .notif-btn-wrapper  { display: none !important; } }
+
+        /* تثبيت header-actions على الجوال وإظهار الهامبرغر دائماً */
+        @media (max-width: 768px) {
+          .header-actions {
+            margin-right: auto;
+            justify-content: flex-end;
+          }
+          .mobile-menu-btn-new {
+            display: flex !important;
+            flex-shrink: 0;
+            width: 44px !important;
+            height: 44px !important;
+            border-radius: 12px !important;
+            background: rgba(14,165,233,0.1) !important;
+            border: 1.5px solid rgba(14,165,233,0.3) !important;
+            color: var(--sky-dark) !important;
+            font-size: 1rem !important;
+            align-items: center !important;
+            justify-content: center !important;
+          }
+        }
 
         .header-actions {
           display: flex;
@@ -1097,11 +1131,12 @@ export function Header({
                   </Link>
                 )}
 
-                {/* ── زر واتساب — للأدمن والموظف فقط ── */}
+                {/* ── زر واتساب — للأدمن والموظف — ديسكتوب فقط ── */}
                 {(finalIsAdmin || finalIsEmployee) && (
                   <Link
                     to="/whatsapp"
                     title="منصة الرسائل"
+                    className="wa-icon-btn"
                     style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       width: 40, height: 40, borderRadius: 12, flexShrink: 0,
@@ -1232,11 +1267,12 @@ export function Header({
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {/* ── زر الإشعارات — يظهر لجميع المستخدمين المسجلين ── */}
-            
-              <NotificationsPanel
-                userId={user?.id}
-                onNavigate={(path) => navigate(path)}
-              />
+                <div className="notif-btn-wrapper">
+                  <NotificationsPanel
+                    userId={user?.id}
+                    onNavigate={(path) => navigate(path)}
+                  />
+                </div>
 
                 {/* ── Avatar / Dropdown ── */}
                 <div style={{ position: 'relative' }}>
@@ -1417,6 +1453,8 @@ export function Header({
               </button>
             </div>
 
+            {/* ── أزرار الدخول في أسفل الـ drawer للزوار فقط ── */}
+
             <div className="mobile-nav-list">
               {navLinks.map((link) => {
                 const iconColors: Record<string, { bg: string; color: string; border: string }> = {
@@ -1483,6 +1521,18 @@ export function Header({
                   العقود
                 </NavLink>
               )}
+              {(finalIsAdmin || finalIsEmployee) && (
+                <NavLink
+                  to="/whatsapp"
+                  className={({ isActive }) => `mobile-nav-btn${isActive ? ' active' : ''}`}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                >
+                  <div className="mn-icon" style={{ background: 'rgba(37,211,102,0.12)', color: '#25d366', border: '1px solid rgba(37,211,102,0.2)' }}>
+                    <i className="fab fa-whatsapp" />
+                  </div>
+                  واتساب
+                </NavLink>
+              )}
             </div>
 
             <div className="mobile-auth-area">
@@ -1524,6 +1574,17 @@ export function Header({
 
               {!user ? (
                 <>
+                  <div style={{
+                    fontSize: 13, fontWeight: 700,
+                    color: isDarkMode ? '#7dd3fc' : '#0284c7',
+                    fontFamily: 'Tajawal, sans-serif',
+                    textAlign: 'center',
+                    padding: '4px 0 8px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}>
+                    <i className="fas fa-user-circle" />
+                    سجّل دخولك للوصول لكل الميزات
+                  </div>
                   <button
                     onClick={() => { setIsMobileMenuOpen(false); onLoginClick(); }}
                     style={{

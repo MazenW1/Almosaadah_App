@@ -163,6 +163,26 @@ function AppInner() {
 
   const isAnyModalOpen = isLoginModalOpen || isRegisterModalOpen || isServiceModalOpen || isForgotPasswordOpen;
 
+  // ── منع اهتزاز الصفحة على الجوال عند فتح أي مودال ──
+  useEffect(() => {
+    if (isAnyModalOpen) {
+      const scrollY = window.scrollY;
+      document.body.dataset.scrollY = String(scrollY);
+      document.body.style.top = `-${scrollY}px`;
+      document.body.classList.add('modal-open');
+    } else {
+      const scrollY = parseInt(document.body.dataset.scrollY || '0', 10);
+      document.body.classList.remove('modal-open');
+      document.body.style.top = '';
+      delete document.body.dataset.scrollY;
+      window.scrollTo(0, scrollY);
+    }
+    return () => {
+      document.body.classList.remove('modal-open');
+      document.body.style.top = '';
+    };
+  }, [isAnyModalOpen]);
+
   useEffect(() => {
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     AOS.init({
